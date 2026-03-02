@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Action RPG</title>
+    <!-- 근미래 폰트: Orbitron (타이틀) + Share Tech Mono (UI/코드) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=block"
+      rel="stylesheet"
+    />
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body {
+        background: #000;
+        overflow: hidden;
+        width: 100vw;
+        height: 100vh;
+        font-family: 'Share Tech Mono', monospace;
+      }
+      #root {
+        width: 100%;
+        height: 100%;
+        position: relative;
+      }
+      #game-container {
+        position: absolute;
+        top: 0; left: 0;
+        width: 100%; height: 100%;
+      }
+      /* pixelArt 모드에서도 배경 이미지는 부드럽게 */
+      #game-container canvas {
+        image-rendering: auto !important;
+      }
+      #ui-root {
+        position: absolute;
+        top: 0; left: 0;
+        width: 100%; height: 100%;
+        pointer-events: none;
+        z-index: 10;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div id="game-container"></div>
+      <div id="ui-root"></div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
