@@ -31,6 +31,7 @@ export class PlayerAnimation {
   private pendingEAttackClip: THREE.AnimationClip | null = null
 
   private prevIsMoving = false
+  hitStopTimer = 0   // >0이면 믹서 정지 (피격 시 타격감)
 
   constructor(private scene: THREE.Scene, private isMounted: () => boolean) {
     // Placeholder
@@ -223,11 +224,23 @@ export class PlayerAnimation {
     })
   }
 
+  /** 피격 히트스톱 트리거 */
+  triggerHitStop(duration: number) {
+    this.hitStopTimer = Math.max(this.hitStopTimer, duration)
+  }
+
   /** 믹서 업데이트 + 루트모션 핀 */
   update(delta: number) {
     if (!this.mixer) return
     const prevPos = this.character.position.clone()
-    this.mixer.update(delta)
+
+    if (this.hitStopTimer > 0) {
+      this.hitStopTimer = Math.max(0, this.hitStopTimer - delta)
+      this.mixer.update(0)   // 애니메이션 정지
+    } else {
+      this.mixer.update(delta)
+    }
+
     for (const bone of this.rootBones) { bone.position.x = 0; bone.position.y = 0 }
     this.character.position.copy(prevPos)
   }

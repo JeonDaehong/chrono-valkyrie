@@ -48,6 +48,11 @@ export class PlayerCombat {
   shieldCooldown = 0
   private shieldMesh: THREE.Mesh | null = null
 
+  // ── 스킬 입력 버퍼 (0.15초 이내 선입력 허용) ─────────────────────
+  private qBuffer = 0
+  private wBuffer = 0
+  private eBuffer = 0
+
   constructor(
     private playerAnim:    PlayerAnimation,
     private controller:    PlayerController,
@@ -122,9 +127,11 @@ export class PlayerCombat {
 
   // ── Q 스킬 ─────────────────────────────────────────────────────────
   startQAttack() {
-    if (this.qCooldown > 0 || this.qIsAttacking || this.isAttacking
-      || this.wIsAttacking || this.eIsAttacking || this.isShielding
-      || !this.playerAnim.qAttackAction || !this.playerAnim.mesh) return
+    if (this.qCooldown > 0 || !this.playerAnim.qAttackAction || !this.playerAnim.mesh) return
+    if (this.qIsAttacking || this.isAttacking || this.wIsAttacking || this.eIsAttacking || this.isShielding) {
+      this.qBuffer = 0.15   // 선입력 저장
+      return
+    }
 
     const hit = this.controller.getGroundHit()
     if (hit) {
@@ -147,9 +154,11 @@ export class PlayerCombat {
 
   // ── W 스킬: 점프 내리찍기 ──────────────────────────────────────────
   startWAttack() {
-    if (this.wCooldown > 0 || this.wIsAttacking || this.isAttacking
-        || this.qIsAttacking || this.eIsAttacking || this.isShielding
-        || !this.playerAnim.wAttackAction || !this.playerAnim.mesh) return
+    if (this.wCooldown > 0 || !this.playerAnim.wAttackAction || !this.playerAnim.mesh) return
+    if (this.wIsAttacking || this.isAttacking || this.qIsAttacking || this.eIsAttacking || this.isShielding) {
+      this.wBuffer = 0.15
+      return
+    }
 
     const char = this.controller.character
     const hit  = this.controller.getGroundHit()
@@ -183,9 +192,11 @@ export class PlayerCombat {
 
   // ── E 스킬: 전기 폭발 ──────────────────────────────────────────────
   startEAttack() {
-    if (this.eCooldown > 0 || this.eIsAttacking || this.isAttacking
-        || this.qIsAttacking || this.wIsAttacking || this.isShielding
-        || !this.playerAnim.eAttackAction || !this.playerAnim.mesh) return
+    if (this.eCooldown > 0 || !this.playerAnim.eAttackAction || !this.playerAnim.mesh) return
+    if (this.eIsAttacking || this.isAttacking || this.qIsAttacking || this.wIsAttacking || this.isShielding) {
+      this.eBuffer = 0.15
+      return
+    }
 
     this.eIsAttacking = true
     this.eTimer       = 0
@@ -221,8 +232,20 @@ export class PlayerCombat {
     this.hud.updateSkillCtrl(this.shieldCooldown, SHIELD_COOLDOWN)
   }
 
+  // ── 버퍼 플러시: 스킬 종료 직후 선입력 소비 ────────────────────────
+  private flushBuffer() {
+    if (this.wBuffer > 0) { this.wBuffer = 0; this.startWAttack(); return }
+    if (this.eBuffer > 0) { this.eBuffer = 0; this.startEAttack(); return }
+    if (this.qBuffer > 0) { this.qBuffer = 0; this.startQAttack() }
+  }
+
   // ── 메인 업데이트 ──────────────────────────────────────────────────
   update(delta: number) {
+    // 버퍼 타이머 감소
+    if (this.qBuffer > 0) this.qBuffer = Math.max(0, this.qBuffer - delta)
+    if (this.wBuffer > 0) this.wBuffer = Math.max(0, this.wBuffer - delta)
+    if (this.eBuffer > 0) this.eBuffer = Math.max(0, this.eBuffer - delta)
+
     // 기본 공격 종료
     if (this.isAttacking) {
       this.attackTimer += delta
@@ -232,6 +255,7 @@ export class PlayerCombat {
           this.playerAnim.switchAction(this.playerAnim.runAction, 0.1)
         else if (this.playerAnim.idleAction)
           this.playerAnim.switchAction(this.playerAnim.idleAction, 0.1)
+        this.flushBuffer()
       }
     }
 
@@ -287,6 +311,7 @@ export class PlayerCombat {
           this.playerAnim.switchAction(this.playerAnim.runAction, 0.15)
         else if (this.playerAnim.idleAction)
           this.playerAnim.switchAction(this.playerAnim.idleAction, 0.15)
+        this.flushBuffer()
       }
     }
 
@@ -377,6 +402,7 @@ export class PlayerCombat {
           this.playerAnim.switchAction(this.playerAnim.runAction, 0.1)
         else if (this.playerAnim.idleAction)
           this.playerAnim.switchAction(this.playerAnim.idleAction, 0.1)
+        this.flushBuffer()
       }
     }
 
@@ -430,6 +456,7 @@ export class PlayerCombat {
           this.playerAnim.switchAction(this.playerAnim.runAction, 0.15)
         else if (this.playerAnim.idleAction)
           this.playerAnim.switchAction(this.playerAnim.idleAction, 0.15)
+        this.flushBuffer()
       }
     }
 

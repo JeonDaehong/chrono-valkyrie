@@ -26,7 +26,7 @@ export const ENEMY2_ATTACK_RANGE    = 12   // 이 거리 안에 들어오면 사
 export const ENEMY2_MIN_DIST        = 5    // 이 거리보다 가까우면 후퇴
 export const ENEMY2_MOVE_SPEED      = 4
 export const ENEMY2_ATTACK_INTERVAL = 2.5  // 발사 주기 (초)
-export const ENEMY2_FIRE_DELAY      = 0.5  // 애니메이션 시작 → 발사 딜레이
+export const ENEMY2_FIRE_DELAY      = 1.0  // 애니메이션 시작 → 발사 딜레이 (궤도 표시 1초)
 
 // 파이어볼
 export const FIREBALL_DMG        = 18
@@ -50,7 +50,8 @@ export const BOSS_STONE_SPEED     = 16
 export const BOSS_STONE_RADIUS    = 3.0
 export const BOSS_CHARGE_DMG      = 55    // 돌진
 export const BOSS_CHARGE_SPEED    = 22
-export const BOSS_AWAKEN_RATIO    = 0.3   // HP 30% 이하 각성
+export const BOSS_AWAKEN_RATIO_1  = 0.7   // HP 70% — 1차 각성기
+export const BOSS_AWAKEN_RATIO_2  = 0.3   // HP 30% — 2차 각성기 (이후 각성 상태 유지)
 export const BOSS_AWAKEN_DMG_MULT = 1.5
 export const BOSS_METEOR_DMG      = 45
 export const BOSS_METEOR_RADIUS   = 3.5

@@ -6,6 +6,7 @@ import bangUrl       from '@assets/sound/bang.mp3?url'
 import {
   boss1IdleFbxPromise, boss1RunFbxPromise, boss1AttackFbxPromise,
   boss1Attack2FbxPromise, boss1JumpAttackFbxPromise, boss1DeathFbxPromise,
+  fireballFbxPromise,
 } from '../../ui/preloader'
 import type { EnemyData } from '../shared/types'
 import type { EffectSystem } from '../fx/EffectSystem'
@@ -17,16 +18,29 @@ import {
   BOSS_JUMP_DMG, BOSS_JUMP_RADIUS,
   BOSS_STONE_DMG, BOSS_STONE_SPEED, BOSS_STONE_RADIUS,
   BOSS_CHARGE_DMG, BOSS_CHARGE_SPEED,
-  BOSS_AWAKEN_RATIO, BOSS_AWAKEN_DMG_MULT,
+  BOSS_AWAKEN_RATIO_1, BOSS_AWAKEN_RATIO_2, BOSS_AWAKEN_DMG_MULT,
   BOSS_METEOR_DMG, BOSS_METEOR_RADIUS,
   BOUNDARY,
 } from '../shared/constants'
+
+// 각성기 공중 부양 높이 / 보스 파이어볼 풀 크기
+const AWAKEN_HEIGHT  = 8
+const BOSS_FB_POOL   = 15
 
 // ── 상태 타입 ──────────────────────────────────────────────────────────
 type BossState =
   | 'inactive' | 'idle' | 'run'
   | 'attack1' | 'attack2' | 'jump_attack' | 'stone_throw' | 'charge'
   | 'awakening' | 'death'
+
+// ── 보스 파이어볼 풀 엔트리 ───────────────────────────────────────────
+interface BossFbEntry {
+  mesh:   THREE.Object3D
+  mixer:  THREE.AnimationMixer | null
+  action: THREE.AnimationAction | null
+  light:  THREE.PointLight
+  inUse:  boolean
+}
 
 // ── 보스 데이터 ───────────────────────────────────────────────────────
 interface BossData {
@@ -46,7 +60,10 @@ interface BossData {
   hitFlash: number
 
   awakened: boolean
-  awakeningTriggered: boolean
+  awakeningTriggered1st: boolean  // 70% 트리거 완료
+  awakeningTriggered2nd: boolean  // 30% 트리거 완료
+  awakeningRound: number          // 현재 진행 중인 각성 회차 (1 or 2)
+  invincible: boolean             // 각성기 중 무적
 
   stateTimer: number
   hitDealt: boolean
@@ -79,15 +96,19 @@ interface BossData {
   // 넉백
   knockbackVel: THREE.Vector3
 
+  hitStopTimer: number   // 피격 히트스톱
   deathTimer: number
 }
 
-// ── 돌 투사체 ─────────────────────────────────────────────────────────
-interface StoneProjectile {
-  mesh: THREE.Mesh
-  vel: THREE.Vector3
-  age: number
+// ── 보스 파이어볼 투사체 (돌 던지기 — fireball.fbx 사용) ─────────────
+interface BossFireballProjectile {
+  fbObj:    THREE.Object3D
+  fbMixer:  THREE.AnimationMixer | null
+  fbLight:  THREE.PointLight
+  vel:      THREE.Vector3
+  age:      number
   hitDealt: boolean
+  poolIdx:  number
 }
 
 // ── 운석 ──────────────────────────────────────────────────────────────
@@ -96,9 +117,12 @@ interface MeteorState {
   warningRing: THREE.Mesh
   timer: number
   fallen: boolean
-  sphere: THREE.Mesh | null
-  sphereY: number
+  fbObj:    THREE.Object3D | null
+  fbMixer:  THREE.AnimationMixer | null
+  fbLight:  THREE.PointLight | null
+  sphereY:  number
   impactDealt: boolean
+  poolIdx:  number
 }
 
 export class BossManager {
@@ -113,20 +137,23 @@ export class BossManager {
   private jumpClip:     THREE.AnimationClip | null = null
   private deathClip:    THREE.AnimationClip | null = null
 
-  private stones:  StoneProjectile[] = []
-  private meteors: MeteorState[]     = []
+  // 돌 던지기 → fireball 투사체
+  private stones:  BossFireballProjectile[] = []
+  private meteors: MeteorState[]            = []
 
-  private meteorRingGeo   = new THREE.RingGeometry(BOSS_METEOR_RADIUS - 0.15, BOSS_METEOR_RADIUS, 40)
-  private stoneGeo        = new THREE.SphereGeometry(1.2, 8, 8)
-  private stoneMat        = new THREE.MeshPhongMaterial({ color: 0x665544, emissive: 0x221100 })
-  private meteorSphereMat = new THREE.MeshPhongMaterial({ color: 0x884422, emissive: 0x441100 })
+  // 보스 파이어볼 풀
+  private bossFbBase: THREE.Group | null = null
+  private bossFbPool: BossFbEntry[]      = []
+  private bossFbFree: number[]           = []
+
+  private meteorRingGeo = new THREE.RingGeometry(BOSS_METEOR_RADIUS - 0.15, BOSS_METEOR_RADIUS, 40)
 
   constructor(
     private scene:        THREE.Scene,
     private getCharacter: () => THREE.Group,
     private fx:           EffectSystem,
     private audio:        AudioManager,
-    private damagePlayer: (amount: number) => void,
+    private damagePlayer: (amount: number, knockDir?: THREE.Vector3) => void,
     private spawnDmgNum:  (pos: THREE.Vector3, amount: number, isPlayer: boolean) => void,
     private hud:          HUD,
     private stunPlayer:   (dur: number) => void,
@@ -167,6 +194,74 @@ export class BossManager {
       if (!this.isMounted()) return
       if (fbx.animations.length > 0) this.deathClip = fbx.animations[0]
     }).catch(e => console.error('[Boss] death:', e))
+
+    // 파이어볼 모델 로드 (돌 던지기 + 운석에 사용)
+    fireballFbxPromise.then(fbx => {
+      if (!this.isMounted()) return
+      this.bossFbBase = fbx
+      this.initBossFireballPool()
+    }).catch(e => console.error('[Boss] fireball:', e))
+  }
+
+  // ── 보스 파이어볼 풀 초기화 ───────────────────────────────────────
+  private initBossFireballPool() {
+    if (this.bossFbPool.length > 0 || !this.bossFbBase) return
+
+    for (let i = 0; i < BOSS_FB_POOL; i++) {
+      const mesh = SkeletonUtils.clone(this.bossFbBase) as THREE.Group
+      mesh.scale.setScalar(0.013)
+      mesh.visible = false
+      mesh.position.set(0, -9999, 0)
+      mesh.traverse((c: THREE.Object3D) => {
+        if ((c as THREE.Mesh).isMesh) {
+          (c as THREE.Mesh).frustumCulled = false
+          c.castShadow = true
+        }
+      })
+      this.scene.add(mesh)
+
+      let mixer: THREE.AnimationMixer | null = null
+      let action: THREE.AnimationAction | null = null
+      if (this.bossFbBase.animations?.length > 0) {
+        mixer  = new THREE.AnimationMixer(mesh as THREE.Group)
+        action = mixer.clipAction(this.bossFbBase.animations[0])
+        action.play()
+      }
+
+      const light = new THREE.PointLight(0xff5500, 0, 12)
+      light.position.set(0, -9999, 0)
+      this.scene.add(light)
+
+      this.bossFbPool.push({ mesh, mixer, action, light, inUse: false })
+      this.bossFbFree.push(i)
+    }
+  }
+
+  private acquireBossFb(x: number, y: number, z: number): {
+    mesh: THREE.Object3D; mixer: THREE.AnimationMixer | null; light: THREE.PointLight; poolIdx: number
+  } | null {
+    if (this.bossFbFree.length === 0) return null
+    const idx   = this.bossFbFree.pop()!
+    const entry = this.bossFbPool[idx]
+    entry.inUse = true
+    entry.mesh.position.set(x, y, z)
+    entry.mesh.rotation.set(0, 0, 0)
+    entry.mesh.visible = true
+    entry.light.position.set(x, y, z)
+    entry.light.intensity = 8
+    if (entry.action) entry.action.reset().play()
+    return { mesh: entry.mesh, mixer: entry.mixer, light: entry.light, poolIdx: idx }
+  }
+
+  private releaseBossFb(poolIdx: number) {
+    const entry = this.bossFbPool[poolIdx]
+    if (!entry) return
+    entry.inUse         = false
+    entry.mesh.visible  = false
+    entry.mesh.position.set(0, -9999, 0)
+    entry.light.intensity = 0
+    entry.light.position.set(0, -9999, 0)
+    this.bossFbFree.push(poolIdx)
   }
 
   // ── 스폰 시도 ─────────────────────────────────────────────────────
@@ -217,7 +312,10 @@ export class BossManager {
       state: 'idle',
       hp: BOSS_HP, maxHp: BOSS_HP, isDead: false,
       hitFlash: 0,
-      awakened: false, awakeningTriggered: false,
+      awakened: false,
+      awakeningTriggered1st: false, awakeningTriggered2nd: false,
+      awakeningRound: 0,
+      invincible: false,
       stateTimer: 1.5,
       hitDealt: false, hitDealt2: false,
       attackRangeMesh: null,
@@ -230,6 +328,7 @@ export class BossManager {
       jumpSecondHitDealt: false, jumpSecondHitAt: 0,
       awakePhase: 0, awakeTimer: 0, meteorSpawnCd: 0,
       knockbackVel: new THREE.Vector3(),
+      hitStopTimer: 0,
       deathTimer: 0,
     }
 
@@ -251,12 +350,14 @@ export class BossManager {
   takeDamage(amount: number, knockDir?: THREE.Vector3) {
     const b = this.boss
     if (!b || b.isDead || b.state === 'death') return
+    if (b.invincible) return   // 각성기 중 무적
 
     b.hp = Math.max(0, b.hp - amount)
     this.hud.updateBossHP(b.hp, b.maxHp)
     this.spawnDmgNum(b.group.position, amount, false)
     this.fx.spawnHit(b.group.position)
     b.hitFlash = 0.15
+    b.hitStopTimer = 0.1   // 보스는 0.1초 정지 (임팩트 강조)
     this.setMaterial(b.group, 0xff4444)
     this.audio.playSound(enemyHitUrl, 0.6)
 
@@ -266,8 +367,17 @@ export class BossManager {
 
     if (b.hp <= 0) { this.killBoss(); return }
 
-    if (!b.awakeningTriggered && b.hp / b.maxHp <= BOSS_AWAKEN_RATIO) {
-      b.awakeningTriggered = true
+    // 1차 각성: 70% HP
+    if (!b.awakeningTriggered1st && b.hp / b.maxHp <= BOSS_AWAKEN_RATIO_1) {
+      b.awakeningTriggered1st = true
+      b.awakeningRound = 1
+      this.setState(b, 'awakening')
+      return
+    }
+    // 2차 각성: 30% HP (1차 완료 후)
+    if (b.awakeningTriggered1st && !b.awakeningTriggered2nd && b.hp / b.maxHp <= BOSS_AWAKEN_RATIO_2) {
+      b.awakeningTriggered2nd = true
+      b.awakeningRound = 2
       this.setState(b, 'awakening')
     }
   }
@@ -276,10 +386,13 @@ export class BossManager {
     const b = this.boss!
     b.isDead = true
     b.state = 'death'
+    b.invincible = false
+    b.group.position.y = 0
     this.cleanupBattleMeshes(b)
     b.mixer.stopAllAction()
     b.deathAction.reset().play()
     b.deathTimer = 4
+    this.fx.spawnDeathExplosion(b.group.position, true)
     this.audio.playSound(enemyDeathUrl, 0.8)
     this.hud.hideBossHP()
   }
@@ -305,25 +418,35 @@ export class BossManager {
   // ── 상태 전환 ─────────────────────────────────────────────────────
   private setState(b: BossData, state: BossState) {
     this.cleanupBattleMeshes(b)
+    const prevAction = b.state === 'idle'        ? b.idleAction
+                     : b.state === 'run'         ? b.chargeAction
+                     : b.state === 'attack1'     ? b.attack1Action
+                     : b.state === 'attack2'     ? b.attack2Action
+                     : b.state === 'jump_attack' ? b.jumpAction
+                     : b.state === 'stone_throw' ? b.attack1Action
+                     : b.state === 'charge'      ? b.chargeAction
+                     : b.state === 'awakening'   ? b.idleAction
+                     : null
     b.state      = state
     b.stateTimer = 0
     b.hitDealt   = false
     b.hitDealt2  = false
-    b.mixer.stopAllAction()
+
+    let nextAction: THREE.AnimationAction | null = null
 
     switch (state) {
       case 'idle':
-        b.idleAction.reset().play()
+        nextAction = b.idleAction
         break
 
       case 'run':
         b.chargeAction.timeScale = 1.0
-        b.chargeAction.reset().play()
+        nextAction = b.chargeAction
         break
 
       // ── 공격1: 휘두르기 — 전방 넓은 링 표시 ──────────────────────
       case 'attack1': {
-        b.attack1Action.reset().play()
+        nextAction = b.attack1Action
         const ring = this.createRangeRing(BOSS_MELEE_RANGE * 0.55, BOSS_MELEE_RANGE, 0xff6600, 0.45)
         ring.position.set(b.group.position.x, 0.12, b.group.position.z)
         this.scene.add(ring)
@@ -333,7 +456,7 @@ export class BossManager {
 
       // ── 공격2: 펀치 — 좁은 전방 링 표시 ─────────────────────────
       case 'attack2': {
-        b.attack2Action.reset().play()
+        nextAction = b.attack2Action
         const ring = this.createRangeRing(0, BOSS_MELEE_RANGE * 0.88, 0xff8800, 0.38)
         ring.position.set(b.group.position.x, 0.12, b.group.position.z)
         this.scene.add(ring)
@@ -343,7 +466,7 @@ export class BossManager {
 
       // ── 점프: 착지 예정 지점 표시 ────────────────────────────────
       case 'jump_attack': {
-        b.jumpAction.reset().play()
+        nextAction = b.jumpAction
         b.jumpY = 0; b.jumpPhase = 0; b.jumpLanded = false
         b.jumpSecondHitDealt = false; b.jumpSecondHitAt = 0
         const char = this.getCharacter()
@@ -357,9 +480,9 @@ export class BossManager {
         break
       }
 
-      // ── 돌 던지기: 타겟 위치 크로스헤어 ─────────────────────────
+      // ── 돌 던지기(fireball): 타겟 위치 크로스헤어 ────────────────
       case 'stone_throw': {
-        b.attack1Action.reset().play()
+        nextAction = b.attack1Action
         const char = this.getCharacter()
         const ring = this.createRangeRing(3.6, 7.8, 0xff2200, 0.5)
         ring.position.set(char.position.x, 0.12, char.position.z)
@@ -368,10 +491,10 @@ export class BossManager {
         break
       }
 
-      // ── 돌진: 경로 표시 ──────────────────────────────────────────
+      // ── 돌진: 경로 표시 (1초 윈드업) ───────────────────────────
       case 'charge': {
         b.chargeAction.timeScale = 3.0
-        b.chargeAction.reset().play()
+        nextAction = b.chargeAction
         const char = this.getCharacter()
         const dx = char.position.x - b.group.position.x
         const dz = char.position.z - b.group.position.z
@@ -396,15 +519,29 @@ export class BossManager {
       }
 
       case 'awakening':
-        b.idleAction.reset().play()
-        b.awakePhase = 0
-        b.awakeTimer = 0
+        nextAction = b.idleAction
+        b.awakePhase    = 0
+        b.awakeTimer    = 0
         b.meteorSpawnCd = 0
+        b.invincible    = true   // 각성기 중 무적
         this.fx.screenShakeTimer = 1.0
         break
 
       case 'death':
         break
+    }
+
+    // 크로스페이드 전환 (death는 즉시 전환)
+    if (nextAction) {
+      nextAction.reset().play()
+      if (prevAction && prevAction !== nextAction && state !== 'death') {
+        prevAction.crossFadeTo(nextAction, 0.15, true)
+      } else if (!prevAction || state === 'death') {
+        b.mixer.stopAllAction()
+        nextAction.reset().play()
+      }
+    } else {
+      b.mixer.stopAllAction()
     }
   }
 
@@ -429,6 +566,11 @@ export class BossManager {
     if (!this.boss) return
     const b    = this.boss
     const char = this.getCharacter()
+
+    // 보스 파이어볼 풀 믹서 업데이트 (풀 엔트리 중 사용 중인 것만)
+    for (const entry of this.bossFbPool) {
+      if (entry.inUse && entry.mixer) entry.mixer.update(delta)
+    }
 
     this.updateStones(delta, char)
     this.updateMeteors(delta, char)
@@ -467,7 +609,13 @@ export class BossManager {
       case 'awakening':   this.updateAwakening(b, char, delta);     break
     }
 
-    b.mixer.update(delta)
+    // 히트스톱: 피격 직후 애니메이션 일시 정지
+    if (b.hitStopTimer > 0) {
+      b.hitStopTimer = Math.max(0, b.hitStopTimer - delta)
+      b.mixer.update(0)
+    } else {
+      b.mixer.update(delta)
+    }
   }
 
   // ── 개별 상태 업데이트 ────────────────────────────────────────────
@@ -493,14 +641,13 @@ export class BossManager {
     if (b.stateTimer > 8.0) this.setState(b, 'idle')
   }
 
-  // ── 휘두르기: 0.7s 1타, 범위 링 표시 ─────────────────────────────
+  // ── 휘두르기: 1.0s 1타, 범위 링 표시 ─────────────────────────────
   private updateAttack1(b: BossData, char: THREE.Group) {
     const clipDur = (this.attackClip?.duration ?? 1.5) * 1.2
     const dx = char.position.x - b.group.position.x
     const dz = char.position.z - b.group.position.z
     b.group.rotation.y = Math.atan2(dx, dz)
 
-    // 링 위치를 보스에 맞춰 갱신 + 펄스
     if (b.attackRangeMesh) {
       b.attackRangeMesh.position.x = b.group.position.x
       b.attackRangeMesh.position.z = b.group.position.z
@@ -511,10 +658,13 @@ export class BossManager {
     const dist = Math.sqrt(dx * dx + dz * dz)
     const dmg1 = b.awakened ? Math.round(BOSS_ATTACK1_DMG * BOSS_AWAKEN_DMG_MULT) : BOSS_ATTACK1_DMG
 
-    if (!b.hitDealt && b.stateTimer >= 1) {
+    if (!b.hitDealt && b.stateTimer >= 1.0) {
       b.hitDealt = true
       if (dist <= BOSS_MELEE_RANGE) {
-        this.damagePlayer(dmg1)
+        const knockDir = dist > 0.01
+          ? new THREE.Vector3(dx / dist, 0, dz / dist)
+          : new THREE.Vector3(0, 0, 1)
+        this.damagePlayer(dmg1, knockDir)
         this.fx.spawnRing(char.position.x, char.position.z, 0xff2200, 3.5, 0.3)
         this.fx.spawnHitOnPos(char.position.x, char.position.z)
       }
@@ -523,7 +673,7 @@ export class BossManager {
     if (b.stateTimer >= clipDur) this.setState(b, 'idle')
   }
 
-  // ── 펀치: 0.75s 1타 ─────────────────────────────────────────────
+  // ── 펀치: 1.0s 1타 ──────────────────────────────────────────────
   private updateAttack2(b: BossData, char: THREE.Group) {
     const clipDur = (this.attack2Clip?.duration ?? 1.2) * 1.2
     const dx = char.position.x - b.group.position.x
@@ -540,10 +690,13 @@ export class BossManager {
     const dist = Math.sqrt(dx * dx + dz * dz)
     const dmg1 = b.awakened ? Math.round(BOSS_ATTACK2_DMG * BOSS_AWAKEN_DMG_MULT) : BOSS_ATTACK2_DMG
 
-    if (!b.hitDealt && b.stateTimer >= 0.25) {
+    if (!b.hitDealt && b.stateTimer >= 1.0) {
       b.hitDealt = true
       if (dist <= BOSS_MELEE_RANGE * 0.88) {
-        this.damagePlayer(dmg1)
+        const knockDir = dist > 0.01
+          ? new THREE.Vector3(dx / dist, 0, dz / dist)
+          : new THREE.Vector3(0, 0, 1)
+        this.damagePlayer(dmg1, knockDir)
         this.fx.spawnHitOnPos(char.position.x, char.position.z)
       }
     }
@@ -557,7 +710,6 @@ export class BossManager {
 
     // 착지 후
     if (b.jumpLanded) {
-      // 착지 예고 링 펄스
       if (b.attackRangeMesh) {
         const mat = b.attackRangeMesh.material as THREE.MeshBasicMaterial
         mat.opacity = 0.3 + 0.2 * Math.abs(Math.sin(b.stateTimer * 6))
@@ -565,7 +717,6 @@ export class BossManager {
 
       if (!b.jumpSecondHitDealt && b.stateTimer >= b.jumpSecondHitAt) {
         b.jumpSecondHitDealt = true
-        // 착지 링 제거
         if (b.attackRangeMesh) {
           this.scene.remove(b.attackRangeMesh)
           b.attackRangeMesh = null
@@ -575,11 +726,15 @@ export class BossManager {
         this.audio.playSound(bangUrl, 0.7)
         const dx = char.position.x - b.group.position.x
         const dz = char.position.z - b.group.position.z
-        if (dx * dx + dz * dz <= (BOSS_JUMP_RADIUS * 1.4) * (BOSS_JUMP_RADIUS * 1.4)) {
+        const d2hit = Math.sqrt(dx * dx + dz * dz)
+        if (d2hit <= BOSS_JUMP_RADIUS * 1.4) {
           const dmg2 = b.awakened
             ? Math.round(BOSS_JUMP_DMG * 0.65 * BOSS_AWAKEN_DMG_MULT)
             : Math.round(BOSS_JUMP_DMG * 0.65)
-          this.damagePlayer(dmg2)
+          const knockDir2 = d2hit > 0.01
+            ? new THREE.Vector3(dx / d2hit, 0, dz / d2hit)
+            : new THREE.Vector3(0, 0, 1)
+          this.damagePlayer(dmg2, knockDir2)
         }
       }
 
@@ -588,7 +743,6 @@ export class BossManager {
     }
 
     if (b.jumpPhase === 0) {
-      // 상승 — 착지 예정 링 팔로우
       const t = Math.min(1, b.stateTimer / RISE_TIME)
       b.jumpY = t * 4.5
       const speed = b.awakened ? BOSS_AWAKENED_SPEED : BOSS_SPEED
@@ -603,7 +757,6 @@ export class BossManager {
       b.group.position.y = b.jumpY
       if (b.stateTimer >= RISE_TIME) b.jumpPhase = 1
     } else {
-      // 하강
       const elapsed = b.stateTimer - RISE_TIME
       const t = Math.min(1, elapsed / FALL_TIME)
       b.jumpY = 4.5 * (1 - t)
@@ -619,7 +772,7 @@ export class BossManager {
       if (t >= 1) {
         b.group.position.y = 0
         b.jumpLanded = true
-        b.jumpSecondHitAt = b.stateTimer + 1.0  // 2타 타이밍
+        b.jumpSecondHitAt = b.stateTimer + 1.0
 
         this.fx.screenShakeTimer = 0.5
         this.fx.spawnRing(b.group.position.x, b.group.position.z, 0xff4400, 6.5, 0.5)
@@ -631,14 +784,17 @@ export class BossManager {
         const dist = Math.sqrt(dx * dx + dz * dz)
         if (dist <= BOSS_JUMP_RADIUS) {
           const dmg = b.awakened ? Math.round(BOSS_JUMP_DMG * BOSS_AWAKEN_DMG_MULT) : BOSS_JUMP_DMG
-          this.damagePlayer(dmg)
-          this.stunPlayer(1.0)   // 1초 기절
+          const knockDir = dist > 0.01
+            ? new THREE.Vector3(dx / dist, 0, dz / dist)
+            : new THREE.Vector3(0, 0, 1)
+          this.damagePlayer(dmg, knockDir)
+          this.stunPlayer(1.0)
         }
       }
     }
   }
 
-  // ── 돌 던지기: 0.6s 1발, 1.1s 2발, 타겟 크로스헤어 표시 ─────────
+  // ── 돌 던지기 (fireball.fbx): 1.0s 발사, 타겟 크로스헤어 표시 ──
   private updateStoneThrow(b: BossData, char: THREE.Group) {
     const clipDur = (this.attackClip?.duration ?? 1.2) * 1.2
     const dx = char.position.x - b.group.position.x
@@ -653,10 +809,9 @@ export class BossManager {
       mat.opacity = 0.35 + 0.2 * Math.abs(Math.sin(b.stateTimer * 12))
     }
 
-    if (!b.hitDealt && b.stateTimer >= 0.6) {
+    if (!b.hitDealt && b.stateTimer >= 1.0) {
       b.hitDealt = true
       this.fireStone(b, char)
-      // 돌 던지면 크로스헤어 제거
       if (b.attackRangeMesh) {
         this.scene.remove(b.attackRangeMesh)
         b.attackRangeMesh = null
@@ -674,17 +829,16 @@ export class BossManager {
     const tl0  = Math.sqrt(tdx0 * tdx0 + tdz0 * tdz0)
     const baseAngle = tl0 > 0 ? Math.atan2(tdx0, tdz0) : b.group.rotation.y
 
-    // 부채꼴 5발 (-40°, -20°, 0°, +20°, +40°)
+    // 부채꼴 5발 (-40°, -20°, 0°, +20°, +40°) — fireball.fbx 사용
     const SPREAD = [-0.698, -0.349, 0, 0.349, 0.698]
     for (const offset of SPREAD) {
-      const angle = baseAngle + offset
-      const stone = new THREE.Mesh(this.stoneGeo, this.stoneMat)
-      stone.position.set(ox, 2.0, oz)
-      stone.castShadow = true
-      stone.frustumCulled = false
-      this.scene.add(stone)
+      const angle    = baseAngle + offset
+      const acquired = this.acquireBossFb(ox, 2.0, oz)
+      if (!acquired) continue
+
+      const { mesh, mixer, light, poolIdx } = acquired
       this.stones.push({
-        mesh: stone,
+        fbObj: mesh, fbMixer: mixer, fbLight: light, poolIdx,
         vel: new THREE.Vector3(
           Math.sin(angle) * BOSS_STONE_SPEED,
           0,
@@ -695,13 +849,12 @@ export class BossManager {
     }
   }
 
-  // ── 돌진: 0.5s 경고 후 이동 ─────────────────────────────────────
+  // ── 돌진: 1.0s 경고 후 이동 ─────────────────────────────────────
   private updateCharge(b: BossData, _char: THREE.Group, delta: number) {
-    const WINDUP     = 0.5
+    const WINDUP     = 1.0    // 1초 경고
     const CHARGE_DUR = 1.2 + WINDUP
 
     if (b.stateTimer < WINDUP) {
-      // 경고 메시 펄스
       if (b.chargeWarningMesh) {
         const mat = b.chargeWarningMesh.material as THREE.MeshBasicMaterial
         mat.opacity = 0.35 + 0.2 * Math.sin((WINDUP - b.stateTimer) * 30)
@@ -710,7 +863,6 @@ export class BossManager {
       return
     }
 
-    // 윈드업 끝 → 경고 메시 제거
     if (b.chargeWarningMesh) {
       this.scene.remove(b.chargeWarningMesh)
       b.chargeWarningMesh = null
@@ -732,7 +884,7 @@ export class BossManager {
     if (!b.hitDealt && Math.sqrt(pdx * pdx + pdz * pdz) <= BOSS_MELEE_RANGE) {
       b.hitDealt = true
       const dmg = b.awakened ? Math.round(BOSS_CHARGE_DMG * BOSS_AWAKEN_DMG_MULT) : BOSS_CHARGE_DMG
-      this.damagePlayer(dmg)
+      this.damagePlayer(dmg, b.chargeDir.clone())
       this.fx.spawnHitOnPos(char.position.x, char.position.z)
       this.fx.screenShakeTimer = 0.3
     }
@@ -740,41 +892,66 @@ export class BossManager {
     if (b.stateTimer >= CHARGE_DUR || b.chargeDistLeft <= 0) this.setState(b, 'idle')
   }
 
-  // ── 각성기: Phase0 인트로 → Phase1 10초 운석 → 각성 완료 ─────────
+  // ── 각성기: Phase0 인트로+부양 → Phase1 운석 → Phase2 착지 ──────
   private updateAwakening(b: BossData, char: THREE.Group, delta: number) {
     b.awakeTimer += delta
 
     if (b.awakePhase === 0) {
+      // 인트로: 플래시 + 공중 부양
+      const t = Math.min(1, b.awakeTimer / 1.5)
+      b.group.position.y = AWAKEN_HEIGHT * t
       const flash = Math.sin(b.awakeTimer * 20) > 0 ? 0xff4400 : 0x441100
       this.setMaterial(b.group, flash)
       this.fx.screenShakeTimer = 0.1
+
       if (b.awakeTimer >= 1.5) {
         b.awakePhase    = 1
         b.awakeTimer    = 0
-        b.meteorSpawnCd = 0.3
+        b.meteorSpawnCd = 0   // 바로 첫 운석 스폰
         this.setMaterial(b.group, null)
       }
       return
     }
 
     if (b.awakePhase === 1) {
-      // 운석 스폰 — 플레이어 주변 3~10 유닛 내, 한 번에 5개
+      // 공중 부양 + 운석 0.3초 간격 1개씩
+      b.group.position.y = AWAKEN_HEIGHT + Math.sin(b.awakeTimer * 2.5) * 0.4
+
       b.meteorSpawnCd -= delta
       if (b.meteorSpawnCd <= 0) {
-        for (let k = 0; k < 5; k++) {
-          const angle = Math.random() * Math.PI * 2
-          const dist  = 3 + Math.random() * 7   // 3~10 유닛
-          const wx = Math.max(-BOUNDARY + 2, Math.min(BOUNDARY - 2, char.position.x + Math.cos(angle) * dist))
-          const wz = Math.max(-BOUNDARY + 2, Math.min(BOUNDARY - 2, char.position.z + Math.sin(angle) * dist))
-          this.spawnSingleMeteor(wx, wz)
-        }
-        b.meteorSpawnCd = 0.7 + Math.random() * 0.8
+        const angle = Math.random() * Math.PI * 2
+        const dist  = 3 + Math.random() * 7
+        const wx = Math.max(-BOUNDARY + 2, Math.min(BOUNDARY - 2, char.position.x + Math.cos(angle) * dist))
+        const wz = Math.max(-BOUNDARY + 2, Math.min(BOUNDARY - 2, char.position.z + Math.sin(angle) * dist))
+        this.spawnSingleMeteor(wx, wz)
+        b.meteorSpawnCd = 0.3   // 고정 0.3초 간격
       }
 
-      // 10초 후 각성 완료
       if (b.awakeTimer >= 10.0) {
-        b.awakened = true
-        this.setMaterial(b.group, 0x880000)  // 빨간 몸 유지
+        b.awakePhase = 2
+        b.awakeTimer = 0
+      }
+      return
+    }
+
+    if (b.awakePhase === 2) {
+      // 착지 — 1초 동안 내려옴
+      const t = Math.min(1, b.awakeTimer / 1.0)
+      b.group.position.y = AWAKEN_HEIGHT * (1 - t)
+
+      if (t >= 1) {
+        b.group.position.y = 0
+        b.invincible = false   // 착지 완료 → 무적 해제
+
+        if (b.awakeningRound === 2) {
+          // 2차 각성 완료 → 영구 각성 상태
+          b.awakened = true
+          this.setMaterial(b.group, 0x880000)
+        }
+
+        this.fx.screenShakeTimer = 0.6
+        this.fx.spawnRing(b.group.position.x, b.group.position.z, 0xff6600, 10.0, 0.6)
+        this.audio.playSound(bangUrl, 0.9)
         this.setState(b, 'idle')
       }
     }
@@ -787,7 +964,12 @@ export class BossManager {
     ring.position.set(wx, 0.08, wz)
     ring.frustumCulled = false
     this.scene.add(ring)
-    this.meteors.push({ wx, wz, warningRing: ring, timer: 1.5, fallen: false, sphere: null, sphereY: 0, impactDealt: false })
+    this.meteors.push({
+      wx, wz, warningRing: ring,
+      timer: 1.5, fallen: false,
+      fbObj: null, fbMixer: null, fbLight: null,
+      sphereY: 0, impactDealt: false, poolIdx: -1,
+    })
   }
 
   private updateMeteors(delta: number, char: THREE.Group) {
@@ -798,17 +980,38 @@ export class BossManager {
         m.warningRing.scale.setScalar(0.85 + 0.15 * Math.sin(m.timer * 20))
         if (m.timer <= 0) {
           m.fallen = true
-          const sphere = new THREE.Mesh(new THREE.SphereGeometry(0.8, 8, 8), this.meteorSphereMat)
-          sphere.position.set(m.wx, 22, m.wz)
-          sphere.frustumCulled = false; sphere.castShadow = true
-          this.scene.add(sphere)
-          m.sphere = sphere; m.sphereY = 22
+          const acquired = this.acquireBossFb(m.wx, 22, m.wz)
+          if (acquired) {
+            m.fbObj   = acquired.mesh
+            m.fbMixer = acquired.mixer
+            m.fbLight = acquired.light
+            m.poolIdx = acquired.poolIdx
+            m.sphereY = 22
+          } else {
+            // 풀 소진 — 경고링 제거 후 즉시 피해 처리
+            this.scene.remove(m.warningRing)
+            if (!m.impactDealt) {
+              m.impactDealt = true
+              const dx = char.position.x - m.wx, dz = char.position.z - m.wz
+              const md = Math.sqrt(dx * dx + dz * dz)
+              if (md <= BOSS_METEOR_RADIUS) {
+                const knockDir = md > 0.01 ? new THREE.Vector3(dx / md, 0, dz / md) : new THREE.Vector3(0, 0, 1)
+                this.damagePlayer(BOSS_METEOR_DMG, knockDir)
+              }
+            }
+            this.meteors.splice(i, 1)
+          }
         }
-      } else if (m.sphere) {
+      } else if (m.fbObj) {
         m.sphereY -= 84 * delta
-        m.sphere.position.y = m.sphereY
+        m.fbObj.position.y = m.sphereY
+        if (m.fbLight) m.fbLight.position.y = m.sphereY
+        m.fbObj.rotation.y += delta * 5
+        if (m.fbMixer) m.fbMixer.update(delta)
+
         if (m.sphereY <= 0) {
-          this.scene.remove(m.sphere); this.scene.remove(m.warningRing); m.sphere = null
+          this.scene.remove(m.warningRing)
+          this.releaseBossFb(m.poolIdx)
           this.fx.spawnHitOnPos(m.wx, m.wz)
           this.fx.spawnRing(m.wx, m.wz, 0xff4400, 5.0, 0.5)
           this.fx.screenShakeTimer = 0.35
@@ -816,7 +1019,11 @@ export class BossManager {
           if (!m.impactDealt) {
             m.impactDealt = true
             const dx = char.position.x - m.wx, dz = char.position.z - m.wz
-            if (dx * dx + dz * dz <= BOSS_METEOR_RADIUS * BOSS_METEOR_RADIUS) this.damagePlayer(BOSS_METEOR_DMG)
+            const md = Math.sqrt(dx * dx + dz * dz)
+            if (md <= BOSS_METEOR_RADIUS) {
+              const knockDir = md > 0.01 ? new THREE.Vector3(dx / md, 0, dz / md) : new THREE.Vector3(0, 0, 1)
+              this.damagePlayer(BOSS_METEOR_DMG, knockDir)
+            }
           }
           this.meteors.splice(i, 1)
         }
@@ -828,19 +1035,26 @@ export class BossManager {
     for (let i = this.stones.length - 1; i >= 0; i--) {
       const s = this.stones[i]
       s.age += delta
-      s.mesh.position.addScaledVector(s.vel, delta)
-      s.mesh.rotation.y += delta * 3
+      s.fbObj.position.addScaledVector(s.vel, delta)
+      s.fbLight.position.copy(s.fbObj.position)
+      s.fbObj.rotation.y += delta * 4
+      s.fbObj.rotation.z += delta * 2
+
       if (!s.hitDealt) {
-        const dx = char.position.x - s.mesh.position.x
-        const dz = char.position.z - s.mesh.position.z
+        const dx = char.position.x - s.fbObj.position.x
+        const dz = char.position.z - s.fbObj.position.z
         if (dx * dx + dz * dz <= BOSS_STONE_RADIUS * BOSS_STONE_RADIUS) {
           s.hitDealt = true
           const dmg = this.boss?.awakened ? Math.round(BOSS_STONE_DMG * BOSS_AWAKEN_DMG_MULT) : BOSS_STONE_DMG
-          this.damagePlayer(dmg)
-          this.fx.spawnHitOnPos(s.mesh.position.x, s.mesh.position.z)
+          const knockDir = s.vel.clone().setY(0).normalize()
+          this.damagePlayer(dmg, knockDir)
+          this.fx.spawnHitOnPos(s.fbObj.position.x, s.fbObj.position.z)
         }
       }
-      if (s.age >= 4.0 || s.hitDealt) { this.scene.remove(s.mesh); this.stones.splice(i, 1) }
+      if (s.age >= 4.0 || s.hitDealt) {
+        this.releaseBossFb(s.poolIdx)
+        this.stones.splice(i, 1)
+      }
     }
   }
 

@@ -12,6 +12,7 @@ export class PlayerController {
   isRightMouseDown      = false
   attackRightClickBlock = 0
   stunTimer             = 0
+  knockbackVel          = new THREE.Vector3()   // 피격 넉백
 
   blinkCharges       = BLINK_MAX
   private blinkRechargeTimer = 0
@@ -58,7 +59,22 @@ export class PlayerController {
     this.hud.updateBlink(this.blinkCharges)
   }
 
+  /** 피격 넉백 적용 */
+  applyKnockback(dir: THREE.Vector3, force: number) {
+    this.knockbackVel.set(dir.x * force, 0, dir.z * force)
+  }
+
   update(delta: number, qIsAttacking: boolean, qFiredDirY: number, isShielding = false, skillLocking = false) {
+    // 넉백 — 스턴 중에도 적용
+    if (this.knockbackVel.lengthSq() > 0.01) {
+      this.character.position.addScaledVector(this.knockbackVel, delta)
+      this.knockbackVel.multiplyScalar(Math.max(0, 1 - delta * 9))
+      // 경계 클램프
+      const B = BOUNDARY
+      this.character.position.x = Math.max(-B, Math.min(B, this.character.position.x))
+      this.character.position.z = Math.max(-B, Math.min(B, this.character.position.z))
+    }
+
     // 기절 — 이동 차단
     if (this.stunTimer > 0) {
       this.stunTimer -= delta

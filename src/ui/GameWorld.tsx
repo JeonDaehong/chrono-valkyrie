@@ -60,13 +60,15 @@ export function GameWorld({ onExit }: GameWorldProps) {
     const spawnDmgNum = (pos: THREE.Vector3, amount: number, isPlayer: boolean) =>
       spawnDamageNumber(pos, amount, isPlayer, world.camera)
 
-    const damagePlayer = (amount: number) => {
+    const damagePlayer = (amount: number, knockDir?: THREE.Vector3) => {
       if (combat.isShielding) return          // 방패로 막기
       playerHP = Math.max(0, playerHP - amount)
       hitFlashTimer        = 0.4
       playerMeshFlashTimer = 0.15
       fx.screenShakeTimer  = 0.25
       playerAnim.setEmissive(0xffffff)
+      playerAnim.triggerHitStop(0.05)   // 피격 히트스톱
+      if (knockDir) controller.applyKnockback(knockDir, 6)  // 피격 넉백
       hud.updateHP(playerHP, playerMaxHP)
       spawnDmgNum(controller.character.position, amount, true)
       audio.playSound(playerHitUrl, 0.8)

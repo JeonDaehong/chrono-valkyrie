@@ -81,11 +81,12 @@ export class WorldManager {
     this.camLookX += (tlx - this.camLookX) * lerpT
     this.camLookZ += (tlz - this.camLookZ) * lerpT
 
+    // sine 감쇠 셰이크 — 자연스럽게 흔들리다 사라짐 (random 방식 대체)
     let shakeX = 0, shakeZ = 0
     if (screenShakeTimer > 0) {
-      const si = screenShakeTimer * 0.6
-      shakeX = (Math.random() - 0.5) * si
-      shakeZ = (Math.random() - 0.5) * si
+      const env = screenShakeTimer * 0.5          // 강도 envelope (timer와 함께 감쇠)
+      shakeX = Math.sin(t * 58) * env * 0.9       // 주파수 58 rad/s
+      shakeZ = Math.sin(t * 42 + 1.3) * env * 0.6 // 위상 오프셋으로 X/Z 독립
     }
 
     this.camera.position.x = this.camLookX + shakeX

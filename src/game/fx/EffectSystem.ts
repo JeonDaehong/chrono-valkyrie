@@ -20,6 +20,9 @@ export class EffectSystem {
   private ringFxList:   RingFx[]  = []
   private flameFxList:  FlameFx[] = []
 
+  // ── 파이어볼 꼬리 스파크 (라이트 풀 미사용) ──────────────────────────
+  private trailSparks: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; vel: THREE.Vector3; age: number; dur: number }[] = []
+
   private smallGeo       = new THREE.SphereGeometry(0.06, 4, 4)
   private slashArcGeo    = new THREE.TorusGeometry(1, 0.07, 6, 28, Math.PI * 0.75)
   private groundRingGeo  = new THREE.RingGeometry(0.85, 1.0, 36)
@@ -335,6 +338,63 @@ export class EffectSystem {
     this.spawnRing(x, z, 0xaa00ff, 14.0, 0.75)
   }
 
+  // ── 적 사망 폭발 ─────────────────────────────────────────────────────
+  spawnDeathExplosion(pos: THREE.Vector3, isBoss = false) {
+    const x = pos.x, z = pos.z
+    if (isBoss) {
+      // 보스: 강렬한 다크레드 + 보라 대폭발
+      this.spawnFx(this.hitFxList,  x, z, 0xff2200, 0xff6600, 80, 0, Math.PI * 2, 0xff1100, 28)
+      this.spawnFx(this.elecFxList, x, z, 0xaa00ff, 0xffffff, 60, 0, Math.PI * 2, 0x880099, 22)
+      this.spawnRing(x, z, 0xff4400, 5.0,  0.35)
+      this.spawnRing(x, z, 0xff2200, 9.0,  0.50)
+      this.spawnRing(x, z, 0xcc0000, 13.0, 0.65)
+      this.spawnRing(x, z, 0x660000, 18.0, 0.80)
+      for (let i = 0; i < 16; i++) {
+        const a    = (i / 16) * Math.PI * 2
+        const mesh = this.acquireFlame(i % 2 === 0 ? 0xff2200 : 0xcc0000)
+        if (!mesh) continue
+        mesh.scale.set(1.2 + Math.random() * 1.0, 1.5 + Math.random() * 1.5, 1)
+        mesh.position.set(x, 0.5, z)
+        mesh.rotation.y = a; mesh.rotation.x = -0.35
+        this.flameFxList.push({ mesh, age: 0, dur: 0.75, vx: Math.sin(a) * 14, vz: Math.cos(a) * 14 })
+      }
+      this.screenShakeTimer = Math.max(this.screenShakeTimer, 0.8)
+    } else {
+      // 일반 적: 주황/빨간 중간 폭발
+      this.spawnFx(this.hitFxList,  x, z, 0xff4400, 0xffaa00, 40, 0, Math.PI * 2, 0xff3300, 18)
+      this.spawnFx(this.elecFxList, x, z, 0xff8800, 0xffdd00, 24, 0, Math.PI * 2, 0xff6600, 14)
+      this.spawnRing(x, z, 0xff6600, 3.5, 0.28)
+      this.spawnRing(x, z, 0xff2200, 6.0, 0.40)
+      for (let i = 0; i < 8; i++) {
+        const a    = (i / 8) * Math.PI * 2
+        const mesh = this.acquireFlame(i % 2 === 0 ? 0xff4400 : 0xffaa00)
+        if (!mesh) continue
+        mesh.scale.set(0.8 + Math.random() * 0.6, 1.0 + Math.random() * 0.8, 1)
+        mesh.position.set(x, 0.4, z)
+        mesh.rotation.y = a; mesh.rotation.x = -0.3
+        this.flameFxList.push({ mesh, age: 0, dur: 0.55, vx: Math.sin(a) * 9, vz: Math.cos(a) * 9 })
+      }
+      this.screenShakeTimer = Math.max(this.screenShakeTimer, 0.3)
+    }
+  }
+
+  // ── 파이어볼 꼬리 파티클 (라이트 없음, 스파크 풀만 사용) ─────────────
+  spawnTrailPuff(x: number, y: number, z: number) {
+    const colors = [0xff4400, 0xff8800, 0xffcc00]
+    for (let i = 0; i < 4; i++) {
+      const mesh = this.acquireSpark(colors[i % colors.length], x, y, z)
+      if (!mesh) continue
+      const angle = Math.random() * Math.PI * 2
+      const spd   = 0.3 + Math.random() * 1.0
+      const mat   = this.sparkPool[mesh.userData.poolIndex as number].mat
+      this.trailSparks.push({
+        mesh, mat,
+        vel: new THREE.Vector3(Math.sin(angle) * spd, 0.5 + Math.random() * 1.5, Math.cos(angle) * spd),
+        age: 0, dur: 0.22,
+      })
+    }
+  }
+
   spawnFireCone(ox: number, oz: number, dirY: number) {
     const fwdX = Math.sin(dirY), fwdZ = Math.cos(dirY)
 
@@ -429,6 +489,15 @@ export class EffectSystem {
       fx.mesh.scale.y = (1 + p * 2.5)
       ;(fx.mesh.material as THREE.MeshBasicMaterial).opacity = 0.92 * Math.pow(1 - p, 1.5)
       if (p >= 1) { this.releaseFlame(fx.mesh); this.flameFxList.splice(i, 1) }
+    }
+
+    for (let i = this.trailSparks.length - 1; i >= 0; i--) {
+      const s = this.trailSparks[i]; s.age += delta
+      const p = s.age / s.dur
+      s.vel.y -= 6 * delta
+      s.mesh.position.addScaledVector(s.vel, delta)
+      s.mat.opacity = Math.max(0, 1 - p)
+      if (p >= 1) { this.releaseSpark(s.mesh); this.trailSparks.splice(i, 1) }
     }
   }
 }

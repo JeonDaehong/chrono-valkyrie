@@ -26,7 +26,7 @@ export class EnemyManager {
     private getCharacter: () => THREE.Group,
     private fx:           EffectSystem,
     private audio:        AudioManager,
-    private damagePlayer: (amount: number) => void,
+    private damagePlayer: (amount: number, knockDir?: THREE.Vector3) => void,
     private spawnDmgNum:  (pos: THREE.Vector3, amount: number, isPlayer: boolean) => void,
     private isMounted:    () => boolean,
   ) {
@@ -108,6 +108,7 @@ export class EnemyManager {
         attackHitDealt: false, deathTimer: 0,
         knockbackVel: new THREE.Vector3(),
         stunTimer: 0,
+        hitStopTimer: 0,
       })
     }
   }
@@ -118,11 +119,13 @@ export class EnemyManager {
     this.spawnDmgNum(enemy.group.position, amount, false)
     this.fx.spawnHit(enemy.group.position)
     enemy.hitFlash = 0.15
+    enemy.hitStopTimer = 0.08   // 약 5프레임 정지 → 타격감
     this.setEnemyMaterial(enemy.group, 0xff4444)
     if (enemy.hp <= 0) {
       enemy.isDead = true
       this.setState(enemy, 'death')
       enemy.deathTimer = 3
+      this.fx.spawnDeathExplosion(enemy.group.position, false)
       this.audio.playSound(enemyDeathUrl, 0.7)
     } else {
       this.audio.playSound(enemyHitUrl, 0.6)
@@ -133,20 +136,35 @@ export class EnemyManager {
     if (enemy.state === state) return
     const prevState = enemy.state
     enemy.state = state
-    enemy.mixer.stopAllAction()
     enemy.attackRing.visible = false
+
+    // 현재 재생 중인 액션 파악
+    const prevAction = prevState === 'idle'   ? enemy.idleAction
+                     : prevState === 'run'    ? enemy.runAction
+                     : prevState === 'attack' ? enemy.attackAction
+                     : prevState === 'death'  ? enemy.deathAction
+                     : null
+
+    let nextAction: THREE.AnimationAction | null = null
     if (state === 'idle') {
-      enemy.idleAction.reset().play()
+      nextAction = enemy.idleAction
     } else if (state === 'run') {
-      enemy.runAction.reset().play()
+      nextAction = enemy.runAction
       if (prevState === 'idle') this.audio.playSound(grrrrUrl, 0.7)
     } else if (state === 'attack') {
-      enemy.attackAction.reset().play()
+      nextAction = enemy.attackAction
       enemy.attackRing.visible = true
       enemy.attackTimer = 0
       enemy.attackHitDealt = false
     } else if (state === 'death') {
-      enemy.deathAction.reset().play()
+      nextAction = enemy.deathAction
+    }
+
+    if (nextAction) {
+      nextAction.reset().play()
+      if (prevAction && prevAction !== nextAction) {
+        prevAction.crossFadeTo(nextAction, 0.15, true)
+      }
     }
   }
 
@@ -215,9 +233,13 @@ export class EnemyManager {
         enemy.group.rotation.y = Math.atan2(dx, dz)
         enemy.attackTimer += delta
 
-        if (!enemy.attackHitDealt && enemy.attackTimer >= 0.65) {
+        if (!enemy.attackHitDealt && enemy.attackTimer >= 1.0) {
           if (dist <= ENEMY_ATTACK_RANGE) {
-            this.damagePlayer(ENEMY_ATTACK_DMG)
+            // 적 → 플레이어 방향으로 넉백
+            const knockDir = dist > 0.01
+              ? new THREE.Vector3(dx / dist, 0, dz / dist)
+              : new THREE.Vector3(0, 0, 1)
+            this.damagePlayer(ENEMY_ATTACK_DMG, knockDir)
             this.fx.spawnSlash(char.position, Math.atan2(ex - px, ez - pz), 0xff3300, 1.1, 0.22)
             this.fx.spawnRing(char.position.x, char.position.z, 0xff2200, 3.0, 0.3)
             this.fx.spawnHitOnPos(char.position.x, char.position.z)
@@ -244,7 +266,13 @@ export class EnemyManager {
         if (enemy.hitFlash <= 0) this.setEnemyMaterial(enemy.group, null)
       }
 
-      enemy.mixer.update(delta)
+      // 히트스톱: 피격 후 약 5프레임 애니메이션 정지
+      if (enemy.hitStopTimer > 0) {
+        enemy.hitStopTimer = Math.max(0, enemy.hitStopTimer - delta)
+        enemy.mixer.update(0)
+      } else {
+        enemy.mixer.update(delta)
+      }
     }
   }
 }

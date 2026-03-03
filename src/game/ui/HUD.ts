@@ -110,9 +110,13 @@ export class HUD {
       'text-shadow:0 0 8px #ff2200'
     label.textContent = 'B O S S'
 
+    // HP 바 + 마커를 감싸는 relative 컨테이너
+    const barContainer = document.createElement('div')
+    barContainer.style.cssText = 'position:relative;width:280px;height:12px'
+
     const outer = document.createElement('div')
     outer.style.cssText =
-      'width:280px;height:12px;background:#1a0000;border:1px solid #661111;border-radius:3px;overflow:hidden;' +
+      'width:100%;height:100%;background:#1a0000;border:1px solid #661111;border-radius:3px;overflow:hidden;' +
       'box-shadow:0 0 10px #ff220055'
 
     this.bossHPInner = document.createElement('div')
@@ -120,8 +124,27 @@ export class HUD {
       'width:100%;height:100%;background:linear-gradient(90deg,#cc0000,#ff3300);border-radius:3px;transition:width 0.1s'
 
     outer.appendChild(this.bossHPInner)
+    barContainer.appendChild(outer)
+
+    // ── 각성 트리거 마커 ─────────────────────────────────────────
+    // 70% 마커 (1차 각성) — 황금색
+    const marker70 = document.createElement('div')
+    marker70.style.cssText =
+      'position:absolute;top:-2px;left:70%;width:2px;height:16px;' +
+      'background:#ffcc00;box-shadow:0 0 5px #ffcc00,0 0 10px #ffaa00;' +
+      'z-index:4;border-radius:1px;pointer-events:none'
+    barContainer.appendChild(marker70)
+
+    // 30% 마커 (2차 각성 · 최종) — 주황
+    const marker30 = document.createElement('div')
+    marker30.style.cssText =
+      'position:absolute;top:-2px;left:30%;width:2px;height:16px;' +
+      'background:#ff6600;box-shadow:0 0 5px #ff6600,0 0 10px #ff4400;' +
+      'z-index:4;border-radius:1px;pointer-events:none'
+    barContainer.appendChild(marker30)
+
     this.bossHPWrap.appendChild(label)
-    this.bossHPWrap.appendChild(outer)
+    this.bossHPWrap.appendChild(barContainer)
     this.mount.appendChild(this.bossHPWrap)
   }
 
