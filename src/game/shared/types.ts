@@ -18,6 +18,7 @@ export interface EnemyData {
   knockbackVel: THREE.Vector3
   stunTimer: number      // 스킬 피격 기절 (>0이면 AI 정지 + 노란 플래시)
   hitStopTimer: number   // 피격 시 애니메이션 일시 정지 (타격감)
+  dizzyGroup: THREE.Group | null  // 기절 시 머리 위 회전 별 이펙트
 }
 
 export type Fx = {

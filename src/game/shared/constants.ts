@@ -136,12 +136,61 @@ export const R_MISSILE_RANGE  = 15
 export const R_HIT_RADIUS     = 1.5
 export const R_EXPLODE_RADIUS = 3.0
 
+// ── A 수류탄 스킬 ──────────────────────────────────────────────────
+export const A_COOLDOWN       = 6.0
+export const A_DMG            = 35
+export const A_RANGE          = 12.0
+export const A_BLAST_RADIUS   = 4.0
+export const A_STUN_DUR       = 1.5
+export const A_ARC_HEIGHT     = 5.0
+export const A_FLIGHT_TIME    = 0.6
+
+// ── S 에너지 검기 ──────────────────────────────────────────────────
+export const S_COOLDOWN       = 4.0
+export const S_DMG            = 45
+export const S_RANGE          = 16.0
+export const S_SPEED          = 18.0
+export const S_WIDTH          = 2.5
+
+// ── D 성스러운 빔 ──────────────────────────────────────────────────
+export const D_COOLDOWN       = 7.0
+export const D_DMG            = 55
+export const D_DOT_DMG        = 15
+export const D_DOT_DUR        = 3.0
+export const D_DOT_TICK       = 0.5
+export const D_RANGE          = 14.0
+export const D_WIDTH          = 2.0
+
+// ── F 공중 폭격 ────────────────────────────────────────────────────
+export const F_COOLDOWN        = 12.0
+export const F_DMG             = 30
+export const F_STRIKE_COUNT    = 10
+export const F_STRIKE_INTERVAL = 0.15
+export const F_BLAST_RADIUS    = 2.5
+export const F_AREA_RADIUS     = 6.0
+
+// ── T 보이드 스톰 (궁극기) ─────────────────────────────────────────
+export const T_COOLDOWN       = 20.0
+export const T_DMG            = 80
+export const T_DOT_DMG        = 10
+export const T_DOT_TICK       = 0.4
+export const T_RADIUS         = 10.0
+export const T_EXPAND_TIME    = 0.8
+export const T_LINGER_DUR     = 3.0
+export const T_PULL_FORCE     = 4.0
+export const T_CHANNEL_TIME   = 0.5
+
 // ── 히트스톱 (공격별 차등) ──────────────────────────────────────────
 export const HITSTOP_BASIC   = 0.06
 export const HITSTOP_Q       = 0.12
 export const HITSTOP_W       = 0.20
 export const HITSTOP_E       = 0.15
 export const HITSTOP_R        = 0.10
+export const HITSTOP_A        = 0.12
+export const HITSTOP_S        = 0.08
+export const HITSTOP_D        = 0.15
+export const HITSTOP_F        = 0.06
+export const HITSTOP_T        = 0.25
 export const HITSTOP_ATTACKER = 0.04  // 공격자(플레이어) 히트스톱
 
 // ── 3-hit 콤보 ──────────────────────────────────────────────────────

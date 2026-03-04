@@ -215,6 +215,7 @@ export class Enemy2Manager {
         knockbackVel: new THREE.Vector3(),
         stunTimer: 0,
         hitStopTimer: 0,
+        dizzyGroup: null,
       })
     }
   }
@@ -412,12 +413,37 @@ export class Enemy2Manager {
         enemy.knockbackVel.multiplyScalar(Math.max(0, 1 - delta * 8))
       }
 
-      // 기절 처리 — AI 정지 + 노란 플래시
+      // 기절 처리 — AI 정지 + 노란 플래시 + 빙글빙글 별
       if (enemy.stunTimer > 0) {
         enemy.stunTimer -= delta
         this.setMaterial(enemy.group, 0xffff00)
-        if (enemy.stunTimer <= 0)
+
+        if (!enemy.dizzyGroup) {
+          enemy.dizzyGroup = new THREE.Group()
+          const starGeo = new THREE.OctahedronGeometry(0.15)
+          const starMat = new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.9 })
+          for (let si = 0; si < 4; si++) {
+            const star = new THREE.Mesh(starGeo, starMat.clone())
+            const ang = (si / 4) * Math.PI * 2
+            star.position.set(Math.cos(ang) * 0.5, 0, Math.sin(ang) * 0.5)
+            enemy.dizzyGroup.add(star)
+          }
+          enemy.dizzyGroup.position.y = 2.5
+          enemy.group.add(enemy.dizzyGroup)
+        }
+        enemy.dizzyGroup.rotation.y += delta * 6
+
+        if (enemy.stunTimer <= 0) {
           this.setMaterial(enemy.group, enemy.hitFlash > 0 ? 0xff4444 : null)
+          if (enemy.dizzyGroup) {
+            enemy.group.remove(enemy.dizzyGroup)
+            enemy.dizzyGroup.traverse(c => {
+              const m = c as THREE.Mesh
+              if (m.isMesh) { m.geometry?.dispose(); (m.material as THREE.Material)?.dispose() }
+            })
+            enemy.dizzyGroup = null
+          }
+        }
         enemy.mixer.update(delta)
         continue
       }

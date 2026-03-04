@@ -130,7 +130,7 @@ export function GameWorld({ onExit }: GameWorldProps) {
         -(e.clientY / window.innerHeight) * 2 + 1,
       )
       if (controller.stunTimer > 0) return
-      if (controller.inputMode === 'mouse' && controller.isRightMouseDown && controller.attackRightClickBlock <= 0 && !combat.isAttacking) {
+      if (controller.inputMode === 'mouse' && controller.isRightMouseDown && controller.attackRightClickBlock <= 0 && !combat.isAttacking && !combat.isShielding) {
         const hit = controller.getGroundHit()
         if (hit) controller.moveTarget = new THREE.Vector3(hit.x, 0, hit.z)
       }
@@ -139,7 +139,7 @@ export function GameWorld({ onExit }: GameWorldProps) {
     const onMouseDown = (e: MouseEvent) => {
       if (e.button === 2) {
         controller.isRightMouseDown = true
-        if (controller.inputMode !== 'mouse' || controller.stunTimer > 0 || controller.attackRightClickBlock > 0 || combat.isAttacking) return
+        if (controller.inputMode !== 'mouse' || controller.stunTimer > 0 || controller.attackRightClickBlock > 0 || combat.isAttacking || combat.isShielding) return
         const hit = controller.getGroundHit()
         if (hit) controller.moveTarget = new THREE.Vector3(hit.x, 0, hit.z)
       } else if (e.button === 0) {
@@ -170,6 +170,11 @@ export function GameWorld({ onExit }: GameWorldProps) {
       if (e.key === 'e' || e.key === 'E') { if (controller.stunTimer <= 0) combat.startEAttack(); return }
       if (e.key === 'r' || e.key === 'R') { if (controller.stunTimer <= 0) combat.startRAttack(); return }
       if (e.key === 'c' || e.key === 'C') { if (controller.stunTimer <= 0) combat.activateShield(); return }
+      if (e.key === 'a' || e.key === 'A') { if (controller.stunTimer <= 0) combat.startAAttack(); return }
+      if (e.key === 's' || e.key === 'S') { if (controller.stunTimer <= 0) combat.startSAttack(); return }
+      if (e.key === 'd' || e.key === 'D') { if (controller.stunTimer <= 0) combat.startDAttack(); return }
+      if (e.key === 'f' || e.key === 'F') { if (controller.stunTimer <= 0) combat.startFAttack(); return }
+      if (e.key === 't' || e.key === 'T') { if (controller.stunTimer <= 0) combat.startTAttack(); return }
       if (e.key === ' ')  { e.preventDefault(); controller.tryBlink() }
     }
 
@@ -216,11 +221,11 @@ export function GameWorld({ onExit }: GameWorldProps) {
 
       // 키보드 모드 방향 입력
       const dx = (arrowState.right ? 1 : 0) - (arrowState.left ? 1 : 0)
-      const dz = (arrowState.up ? 1 : 0) - (arrowState.down ? 1 : 0)
+      const dz = (arrowState.down ? 1 : 0) - (arrowState.up ? 1 : 0)
       controller.setDirectionInput(dx, dz)
 
       // 모듈 업데이트
-      controller.update(delta, combat.qIsAttacking, combat.qFiredDirY, combat.isShielding, combat.wMoveLocked || combat.eIsAttacking || combat.rIsAttacking)
+      controller.update(delta, combat.qIsAttacking, combat.qFiredDirY, combat.isShielding, combat.wMoveLocked || combat.eIsAttacking || combat.rIsAttacking || combat.aIsAttacking || combat.sIsAttacking || combat.dIsAttacking || combat.fIsAttacking || combat.tIsAttacking)
       combat.update(delta)
       enemyManager.update(delta)
       enemy2Manager.update(delta)

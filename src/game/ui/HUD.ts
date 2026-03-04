@@ -20,6 +20,7 @@ export class HUD {
   private hpGhost!: HTMLDivElement
   private ghostTarget = 1.0   // ghost bar 목표 비율
   private shieldGaugeInner!: HTMLDivElement
+  private newSkillBar!: HTMLDivElement
 
   constructor(private mount: HTMLDivElement) {
     this.createHPBar()
@@ -28,6 +29,7 @@ export class HUD {
     this.createQHUD()
     this.createBossHPBar()
     this.createSkillBar()
+    this.createNewSkillBar()
     this.createStunOverlay()
     this.createScreenFlash()
   }
@@ -213,6 +215,50 @@ export class HUD {
     }
   }
 
+  // ── A / S / D / F / T 스킬 버튼 (Q 왼쪽에 나란히) ──────────────────
+  private createNewSkillBar() {
+    this.newSkillBar = document.createElement('div')
+    this.newSkillBar.style.cssText =
+      'position:fixed;bottom:64px;right:calc(50% + 55px);' +
+      'z-index:1000;pointer-events:none;display:flex;flex-direction:row-reverse;gap:8px;align-items:flex-start'
+    this.mount.appendChild(this.newSkillBar)
+
+    const skills: { key: string; label: string; color: string; glow: string }[] = [
+      { key: 'A', label: 'A', color: '#ff8800', glow: '#ff6600' },
+      { key: 'S', label: 'S', color: '#00ffee', glow: '#00ccbb' },
+      { key: 'D', label: 'D', color: '#ffdd44', glow: '#ffbb00' },
+      { key: 'F', label: 'F', color: '#ff4444', glow: '#cc2200' },
+      { key: 'T', label: 'T', color: '#8800ff', glow: '#6600cc' },
+    ]
+
+    for (const s of skills) {
+      const wrap = document.createElement('div')
+      wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:3px'
+
+      const btn = document.createElement('div')
+      btn.style.cssText =
+        `width:36px;height:36px;border-radius:6px;border:2px solid ${s.color};background:${s.color};` +
+        `box-shadow:0 0 10px ${s.glow};display:flex;align-items:center;justify-content:center;` +
+        `font-family:monospace;font-weight:900;font-size:16px;color:#fff;` +
+        `transition:background 0.1s,box-shadow 0.1s`
+      btn.textContent = s.label
+
+      const coolBar = document.createElement('div')
+      coolBar.style.cssText =
+        'width:36px;height:3px;background:#110033;border-radius:2px;overflow:hidden;display:none'
+
+      const fill = document.createElement('div')
+      fill.style.cssText =
+        `width:0%;height:100%;background:linear-gradient(90deg,${s.color},${s.glow});border-radius:2px;transition:width 0.05s`
+
+      coolBar.appendChild(fill)
+      wrap.appendChild(btn)
+      wrap.appendChild(coolBar)
+      this.newSkillBar.appendChild(wrap)
+      this.skillEls.set(s.key, { key: btn, fill })
+    }
+  }
+
   // ── 플레이어 기절 오버레이 ─────────────────────────────────────────
   private createStunOverlay() {
     this.stunOverlay = document.createElement('div')
@@ -274,6 +320,11 @@ export class HUD {
   updateSkillE(cooldown: number, max: number)    { this.updateSkill('E',    cooldown, max, '#aa44ff', '#8800ff') }
   updateSkillR(cooldown: number, max: number)    { this.updateSkill('R',    cooldown, max, '#00aaff', '#0088ff') }
   updateSkillC(cooldown: number, max: number)    { this.updateSkill('C',    cooldown, max, '#4488ff', '#2266dd') }
+  updateSkillA(cooldown: number, max: number)    { this.updateSkill('A',    cooldown, max, '#ff8800', '#ff6600') }
+  updateSkillS(cooldown: number, max: number)    { this.updateSkill('S',    cooldown, max, '#00ffee', '#00ccbb') }
+  updateSkillD(cooldown: number, max: number)    { this.updateSkill('D',    cooldown, max, '#ffdd44', '#ffbb00') }
+  updateSkillF(cooldown: number, max: number)    { this.updateSkill('F',    cooldown, max, '#ff4444', '#cc2200') }
+  updateSkillT(cooldown: number, max: number)    { this.updateSkill('T',    cooldown, max, '#8800ff', '#6600cc') }
 
   updateShieldGauge(ratio: number) {
     this.shieldGaugeInner.style.width = `${Math.max(0, Math.min(1, ratio)) * 100}%`
@@ -346,6 +397,7 @@ export class HUD {
     if (this.mount.contains(this.hitVignette)) this.mount.removeChild(this.hitVignette)
     if (this.mount.contains(this.bossHPWrap))  this.mount.removeChild(this.bossHPWrap)
     if (this.mount.contains(this.skillBar))    this.mount.removeChild(this.skillBar)
+    if (this.mount.contains(this.newSkillBar)) this.mount.removeChild(this.newSkillBar)
     if (this.mount.contains(this.stunOverlay)) this.mount.removeChild(this.stunOverlay)
     if (this.mount.contains(this.stunText))    this.mount.removeChild(this.stunText)
     if (this.mount.contains(this.screenFlash)) this.mount.removeChild(this.screenFlash)

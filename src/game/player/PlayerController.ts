@@ -131,7 +131,7 @@ export class PlayerController {
     }
 
     // ── 마우스 모드: 클릭-투-무브 ─────────────────────────────────────
-    if (this.moveTarget && !qIsAttacking && !skillLocking) {
+    if (this.moveTarget && !qIsAttacking && !skillLocking && !isShielding) {
       const dx   = this.moveTarget.x - this.character.position.x
       const dz   = this.moveTarget.z - this.character.position.z
       const dist = Math.sqrt(dx * dx + dz * dz)

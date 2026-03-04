@@ -472,6 +472,143 @@ export class EffectSystem {
     this.screenShakeTimer = 0.2
   }
 
+  // ── 수류탄 폭발 ─────────────────────────────────────────────────────
+  spawnGrenadeExplosion(x: number, z: number) {
+    const flash = this.acquireLight(0xff6600, 20, 18, x, 1.5, z)
+    if (flash) this.hitFxList.push({ light: flash, age: 0, sparks: [] })
+    const flash2 = this.acquireLight(0xffaa00, 14, 14, x, 2.5, z)
+    if (flash2) this.elecFxList.push({ light: flash2, age: 0, sparks: [] })
+
+    const colors = [0xff6600, 0xff8800, 0xffaa00, 0xff4400]
+    const sparks: Fx['sparks'] = []
+    for (let i = 0; i < 50; i++) {
+      const col  = colors[Math.floor(Math.random() * colors.length)]
+      const mesh = this.acquireSpark(col, x, 0.4 + Math.random() * 2, z)
+      if (!mesh) continue
+      const angle = Math.random() * Math.PI * 2
+      const spd   = 3 + Math.random() * 10
+      sparks.push({ mesh, vel: new THREE.Vector3(Math.sin(angle) * spd, 1 + Math.random() * 6, Math.cos(angle) * spd), age: 0 })
+    }
+    if (flash) this.hitFxList[this.hitFxList.length - 1].sparks = sparks
+    else for (const s of sparks) this.releaseSpark(s.mesh)
+
+    this.spawnRing(x, z, 0xff8800, 4.0, 0.35)
+    this.spawnRing(x, z, 0xff4400, 6.5, 0.50)
+    this.screenShakeTimer = Math.max(this.screenShakeTimer, 0.4)
+  }
+
+  // ── 검기 트레일 ────────────────────────────────────────────────────
+  spawnBladeTrail(x: number, y: number, z: number) {
+    const colors = [0x00ffee, 0x00ccff, 0x44ddff]
+    for (let i = 0; i < 3; i++) {
+      const mesh = this.acquireSpark(colors[i], x, y, z)
+      if (!mesh) continue
+      const angle = Math.random() * Math.PI * 2
+      const spd   = 0.2 + Math.random() * 0.6
+      const mat   = this.sparkPool[mesh.userData.poolIndex as number].mat
+      this.trailSparks.push({
+        mesh, mat,
+        vel: new THREE.Vector3(Math.sin(angle) * spd, 0.3 + Math.random() * 1.0, Math.cos(angle) * spd),
+        age: 0, dur: 0.18,
+      })
+    }
+  }
+
+  // ── 성스러운 빔 ────────────────────────────────────────────────────
+  spawnHolyBeam(x: number, z: number, dirY: number, length: number) {
+    const fwdX = Math.sin(dirY), fwdZ = Math.cos(dirY)
+    const flash = this.acquireLight(0xffdd44, 20, 20, x + fwdX * length * 0.5, 2, z + fwdZ * length * 0.5)
+    if (flash) this.elecFxList.push({ light: flash, age: 0, sparks: [] })
+
+    const colors = [0xffdd44, 0xffffff, 0xffcc00]
+    for (let d = 0; d < length; d += 1.5) {
+      const bx = x + fwdX * d, bz = z + fwdZ * d
+      for (let i = 0; i < 4; i++) {
+        const col  = colors[Math.floor(Math.random() * colors.length)]
+        const mesh = this.acquireSpark(col, bx + (Math.random() - 0.5) * 0.5, 0.3 + Math.random() * 2, bz + (Math.random() - 0.5) * 0.5)
+        if (!mesh) continue
+        const mat = this.sparkPool[mesh.userData.poolIndex as number].mat
+        this.trailSparks.push({
+          mesh, mat,
+          vel: new THREE.Vector3((Math.random() - 0.5) * 2, 2 + Math.random() * 3, (Math.random() - 0.5) * 2),
+          age: 0, dur: 0.3,
+        })
+      }
+    }
+    this.spawnRing(x + fwdX * length * 0.5, z + fwdZ * length * 0.5, 0xffdd44, 3.0, 0.4)
+    this.screenShakeTimer = Math.max(this.screenShakeTimer, 0.3)
+  }
+
+  // ── 공중 폭격 착탄 ─────────────────────────────────────────────────
+  spawnBombardmentStrike(x: number, z: number) {
+    const flash = this.acquireLight(0xff4400, 16, 14, x, 1.5, z)
+    if (flash) this.hitFxList.push({ light: flash, age: 0, sparks: [] })
+
+    const colors = [0xff4400, 0xff8800, 0xff2200]
+    const sparks: Fx['sparks'] = []
+    for (let i = 0; i < 30; i++) {
+      const col  = colors[Math.floor(Math.random() * colors.length)]
+      const mesh = this.acquireSpark(col, x, 0.3 + Math.random() * 1.5, z)
+      if (!mesh) continue
+      const angle = Math.random() * Math.PI * 2
+      const spd   = 2 + Math.random() * 8
+      sparks.push({ mesh, vel: new THREE.Vector3(Math.sin(angle) * spd, 1 + Math.random() * 4, Math.cos(angle) * spd), age: 0 })
+    }
+    if (flash) this.hitFxList[this.hitFxList.length - 1].sparks = sparks
+    else for (const s of sparks) this.releaseSpark(s.mesh)
+
+    this.spawnRing(x, z, 0xff6600, 2.5, 0.25)
+    this.spawnRing(x, z, 0xff2200, 4.0, 0.35)
+    this.screenShakeTimer = Math.max(this.screenShakeTimer, 0.12)
+  }
+
+  // ── 보이드 스톰 폭발 ───────────────────────────────────────────────
+  spawnVoidExplosion(x: number, z: number) {
+    const flash  = this.acquireLight(0x8800ff, 28, 25, x, 2, z)
+    const flash2 = this.acquireLight(0xcc00ff, 18, 20, x, 3, z)
+    if (flash)  this.elecFxList.push({ light: flash,  age: 0, sparks: [] })
+    if (flash2) this.elecFxList.push({ light: flash2, age: 0, sparks: [] })
+
+    const colors = [0x8800ff, 0x4400aa, 0xcc00ff, 0xffffff]
+    const sparks: Fx['sparks'] = []
+    for (let i = 0; i < 80; i++) {
+      const col  = colors[Math.floor(Math.random() * colors.length)]
+      const mesh = this.acquireSpark(col, x, 0.5 + Math.random() * 3, z)
+      if (!mesh) continue
+      const angle = Math.random() * Math.PI * 2
+      const spd   = 4 + Math.random() * 12
+      sparks.push({ mesh, vel: new THREE.Vector3(Math.sin(angle) * spd, 1 + Math.random() * 6, Math.cos(angle) * spd), age: 0 })
+    }
+    if (flash) this.elecFxList[this.elecFxList.length - 2].sparks = sparks
+    else for (const s of sparks) this.releaseSpark(s.mesh)
+
+    this.spawnRing(x, z, 0x8800ff, 5.0, 0.4)
+    this.spawnRing(x, z, 0x4400aa, 10.0, 0.6)
+    this.spawnRing(x, z, 0x220044, 15.0, 0.8)
+    this.screenShakeTimer = Math.max(this.screenShakeTimer, 1.0)
+  }
+
+  // ── 보이드 펄스 (지속 중 주기적) ────────────────────────────────────
+  spawnVoidPulse(x: number, z: number, radius: number) {
+    this.spawnRing(x, z, 0x8800ff, radius, 0.3)
+    for (let i = 0; i < 8; i++) {
+      const angle = Math.random() * Math.PI * 2
+      const dist  = radius * (0.5 + Math.random() * 0.5)
+      const sx    = x + Math.cos(angle) * dist
+      const sz    = z + Math.sin(angle) * dist
+      const mesh  = this.acquireSpark(0xaa00ff, sx, 0.5 + Math.random(), sz)
+      if (!mesh) continue
+      const toCenterX = x - sx, toCenterZ = z - sz
+      const len = Math.sqrt(toCenterX * toCenterX + toCenterZ * toCenterZ) || 1
+      const mat = this.sparkPool[mesh.userData.poolIndex as number].mat
+      this.trailSparks.push({
+        mesh, mat,
+        vel: new THREE.Vector3(toCenterX / len * 6, 1.5, toCenterZ / len * 6),
+        age: 0, dur: 0.4,
+      })
+    }
+  }
+
   // ── 업데이트 ──────────────────────────────────────────────────────────
   private updateFxList(list: Fx[], dur: number, maxInt: number, dt: number) {
     for (let i = list.length - 1; i >= 0; i--) {
