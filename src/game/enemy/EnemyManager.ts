@@ -11,9 +11,15 @@ import type { EnemyData } from '../shared/types'
 import type { EffectSystem } from '../fx/EffectSystem'
 import type { AudioManager } from '../audio/AudioManager'
 import { ENEMY_HP, ENEMY_ATTACK_RANGE, ENEMY_DETECT_RANGE, ENEMY_ATTACK_DMG } from '../shared/constants'
+import { clampToZones, type WalkableZone } from '../stage/StageConfig'
 
 export class EnemyManager {
   enemies: EnemyData[] = []
+  clipsReady = false
+  onLastKill: (() => void) | null = null
+  private _zones: WalkableZone[] | null = null
+
+  setWalkableZones(zones: WalkableZone[]) { this._zones = zones }
 
   private baseGroup:   THREE.Group | null = null
   private idleClip:    THREE.AnimationClip | null = null
@@ -26,7 +32,7 @@ export class EnemyManager {
     private getCharacter: () => THREE.Group,
     private fx:           EffectSystem,
     private audio:        AudioManager,
-    private damagePlayer: (amount: number, knockDir?: THREE.Vector3) => void,
+    private damagePlayer: (amount: number, knockDir?: THREE.Vector3, attackOrigin?: THREE.Vector3) => void,
     private spawnDmgNum:  (pos: THREE.Vector3, amount: number, isPlayer: boolean) => void,
     private isMounted:    () => boolean,
   ) {
@@ -38,39 +44,38 @@ export class EnemyManager {
       if (!this.isMounted()) return
       this.baseGroup = fbx
       if (fbx.animations.length > 0) this.idleClip = fbx.animations[0]
-      this.trySpawn()
+      this.checkClipsReady()
     }).catch(e => console.error('[Enemy] idle:', e))
 
     enemy1RunFbxPromise.then(fbx => {
       if (!this.isMounted()) return
       if (fbx.animations.length > 0) this.runClip = fbx.animations[0]
-      this.trySpawn()
+      this.checkClipsReady()
     }).catch(e => console.error('[Enemy] run:', e))
 
     enemy1AttackFbxPromise.then(fbx => {
       if (!this.isMounted()) return
       if (fbx.animations.length > 0) this.attackClip = fbx.animations[0]
-      this.trySpawn()
+      this.checkClipsReady()
     }).catch(e => console.error('[Enemy] attack:', e))
 
     enemy1DeathFbxPromise.then(fbx => {
       if (!this.isMounted()) return
       if (fbx.animations.length > 0) this.deathClip = fbx.animations[0]
-      this.trySpawn()
+      this.checkClipsReady()
     }).catch(e => console.error('[Enemy] death:', e))
   }
 
-  private trySpawn() {
-    if (!this.baseGroup || !this.idleClip || !this.runClip || !this.attackClip || !this.deathClip) return
-    if (this.enemies.length > 0) return
+  private checkClipsReady() {
+    if (this.baseGroup && this.idleClip && this.runClip && this.attackClip && this.deathClip)
+      this.clipsReady = true
+  }
 
-    const positions: [number, number][] = [
-      [-22, -22], [22, -22], [-22, 22], [22, 22],
-      [0, -24], [0, 24], [-24, 0], [24, 0],
-    ]
-
+  /** 지정 위치에 적 스폰 */
+  spawnAt(positions: [number, number][]) {
+    if (!this.clipsReady) return
     for (const [sx, sz] of positions) {
-      const group = SkeletonUtils.clone(this.baseGroup) as THREE.Group
+      const group = SkeletonUtils.clone(this.baseGroup!) as THREE.Group
       group.scale.setScalar(0.02)
       group.position.set(sx + (Math.random() - 0.5) * 3, 0, sz + (Math.random() - 0.5) * 3)
       group.traverse((c: THREE.Object3D) => {
@@ -92,7 +97,6 @@ export class EnemyManager {
       deathAction.loop  = THREE.LoopOnce; deathAction.clampWhenFinished = true
       idleAction.play()
 
-      // 공격 범위 링
       const ringGeo = new THREE.RingGeometry(ENEMY_ATTACK_RANGE - 0.15, ENEMY_ATTACK_RANGE + 0.1, 48)
       const ringMat = new THREE.MeshBasicMaterial({ color: 0xff2200, transparent: true, opacity: 0.55, side: THREE.DoubleSide })
       const ring    = new THREE.Mesh(ringGeo, ringMat)
@@ -113,6 +117,30 @@ export class EnemyManager {
     }
   }
 
+  /** 모든 적 씬에서 제거 + GPU 리소스 해제 */
+  clearAll() {
+    for (const e of this.enemies) {
+      this.scene.remove(e.group)
+      this.scene.remove(e.attackRing)
+      // attack ring dispose
+      e.attackRing.geometry.dispose()
+      ;(e.attackRing.material as THREE.Material).dispose()
+      // cloned FBX mesh dispose
+      e.group.traverse((child) => {
+        const mesh = child as THREE.Mesh
+        if (mesh.isMesh) {
+          mesh.geometry?.dispose()
+          const mat = mesh.material
+          if (Array.isArray(mat)) mat.forEach(m => m.dispose())
+          else if (mat) (mat as THREE.Material).dispose()
+        }
+      })
+      e.mixer.stopAllAction()
+      e.mixer.uncacheRoot(e.group)
+    }
+    this.enemies = []
+  }
+
   damageEnemy(enemy: EnemyData, amount: number) {
     if (enemy.isDead) return
     enemy.hp -= amount
@@ -127,6 +155,9 @@ export class EnemyManager {
       enemy.deathTimer = 3
       this.fx.spawnDeathExplosion(enemy.group.position, false)
       this.audio.playSound(enemyDeathUrl, 0.7)
+      // 마지막 적 킬 슬로우모
+      const alive = this.enemies.filter(e => !e.isDead)
+      if (alive.length === 0 && this.onLastKill) this.onLastKill()
     } else {
       this.audio.playSound(enemyHitUrl, 0.6)
     }
@@ -228,6 +259,10 @@ export class EnemyManager {
       if (enemy.state === 'run' && dist > 0.1) {
         enemy.group.position.x += (dx / dist) * 5 * delta
         enemy.group.position.z += (dz / dist) * 5 * delta
+        if (this._zones) {
+          const [cx, cz] = clampToZones(enemy.group.position.x, enemy.group.position.z, this._zones)
+          enemy.group.position.x = cx; enemy.group.position.z = cz
+        }
         enemy.group.rotation.y = Math.atan2(dx, dz)
       } else if (enemy.state === 'attack') {
         enemy.group.rotation.y = Math.atan2(dx, dz)
@@ -239,7 +274,7 @@ export class EnemyManager {
             const knockDir = dist > 0.01
               ? new THREE.Vector3(dx / dist, 0, dz / dist)
               : new THREE.Vector3(0, 0, 1)
-            this.damagePlayer(ENEMY_ATTACK_DMG, knockDir)
+            this.damagePlayer(ENEMY_ATTACK_DMG, knockDir, enemy.group.position.clone())
             this.fx.spawnSlash(char.position, Math.atan2(ex - px, ez - pz), 0xff3300, 1.1, 0.22)
             this.fx.spawnRing(char.position.x, char.position.z, 0xff2200, 3.0, 0.3)
             this.fx.spawnHitOnPos(char.position.x, char.position.z)

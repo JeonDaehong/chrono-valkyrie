@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  startPreload,
   idleGlbPromise, runGlbPromise, attackGlbPromise, qAttackGlbPromise,
   wAttackGlbPromise, eAttackGlbPromise,
   enemy1IdleFbxPromise, enemy1RunFbxPromise, enemy1AttackFbxPromise, enemy1DeathFbxPromise,
@@ -29,6 +30,9 @@ export function LoadingScreen({ onReady }: Props) {
       @keyframes ls-blink  { 0%,49%{opacity:1} 50%,100%{opacity:0} }
     `
     document.head.appendChild(style)
+
+    // 로딩 시작 (메인화면 버벅임 방지 — 여기서 비로소 GLB/FBX 로드 시작)
+    startPreload()
 
     // 진행률: rAF로 0→95% 시뮬레이션, 완료 후 100% 점프
     let rafId: number

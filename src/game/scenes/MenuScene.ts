@@ -502,12 +502,13 @@ export class MenuScene extends Phaser.Scene {
     let sfxMuted = s.sfxMuted
 
     // 패널 레이아웃 상수
-    const PX = W / 2 - 230, PY = H / 2 - 145
-    const PW = 460,          PH = 290
+    const PX = W / 2 - 230, PY = H / 2 - 195
+    const PW = 460,          PH = 390
     const TX = PX + 28,      TW = 270          // 슬라이더 트랙
     const MUTE_X  = PX + PW - 20               // 음소거 버튼 우측 정렬
     const BGM_LY  = PY + 82,  BGM_TY = PY + 108  // BGM 레이블·트랙 Y
     const SFX_LY  = PY + 162, SFX_TY = PY + 188  // SFX 레이블·트랙 Y
+    const INPUT_SECTION_Y = PY + 230            // INPUT MODE 섹션 시작 Y
     const CLOSE_Y = PY + PH - 32
 
     const D = 200   // 베이스 depth
@@ -646,6 +647,55 @@ export class MenuScene extends Phaser.Scene {
       sfxPct.setColor(sfxMuted ? CLR.GREY : CLR.WHITE)
       drawTracks(); refreshThumbs()
       AudioManager.saveSettings({ bgmVolume: bgmVol, bgmMuted, sfxVolume: sfxVol, sfxMuted })
+    })
+
+    // ── INPUT MODE 섹션 ──
+    const inputDiv = reg(this.add.graphics().setDepth(D + 2))
+    inputDiv.fillStyle(CLR.CYAN, 0.18)
+    inputDiv.fillRect(PX + 20, INPUT_SECTION_Y, PW - 40, 1)
+
+    reg(this.add.text(PX + PW / 2, INPUT_SECTION_Y + 22, '[ INPUT MODE ]', {
+      fontFamily: "'Orbitron', sans-serif",
+      fontSize: '14px',
+      color: CLR.CYAN_S,
+      letterSpacing: 4,
+    } as Phaser.Types.GameObjects.Text.TextStyle).setOrigin(0.5, 0.5).setDepth(D + 2))
+
+    let inputMode = (localStorage.getItem('inputMode') as 'mouse' | 'keyboard') || 'mouse'
+
+    const INPUT_BTN_Y = INPUT_SECTION_Y + 56
+    const mouseBtn = reg(this.add.text(PX + PW / 2 - 60, INPUT_BTN_Y, '[ MOUSE ]', {
+      fontFamily: "'Share Tech Mono', monospace",
+      fontSize: '13px',
+      color: inputMode === 'mouse' ? CLR.CYAN_S : CLR.GREY,
+      letterSpacing: 2,
+    } as Phaser.Types.GameObjects.Text.TextStyle)
+      .setOrigin(0.5, 0.5).setDepth(D + 2)
+      .setInteractive({ useHandCursor: true })) as Phaser.GameObjects.Text
+
+    const kbBtn = reg(this.add.text(PX + PW / 2 + 60, INPUT_BTN_Y, '[ KEYBOARD ]', {
+      fontFamily: "'Share Tech Mono', monospace",
+      fontSize: '13px',
+      color: inputMode === 'keyboard' ? CLR.CYAN_S : CLR.GREY,
+      letterSpacing: 2,
+    } as Phaser.Types.GameObjects.Text.TextStyle)
+      .setOrigin(0.5, 0.5).setDepth(D + 2)
+      .setInteractive({ useHandCursor: true })) as Phaser.GameObjects.Text
+
+    const refreshInputBtns = () => {
+      mouseBtn.setColor(inputMode === 'mouse' ? CLR.CYAN_S : CLR.GREY)
+      kbBtn.setColor(inputMode === 'keyboard' ? CLR.CYAN_S : CLR.GREY)
+    }
+
+    mouseBtn.on('pointerdown', () => {
+      inputMode = 'mouse'
+      localStorage.setItem('inputMode', inputMode)
+      refreshInputBtns()
+    })
+    kbBtn.on('pointerdown', () => {
+      inputMode = 'keyboard'
+      localStorage.setItem('inputMode', inputMode)
+      refreshInputBtns()
     })
 
     // ── 슬라이더 히트존 (투명 — 드래그 입력 수신) ──

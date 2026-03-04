@@ -13,7 +13,7 @@ import {
 } from './preloader'
 
 import { WorldManager }    from '../game/world/WorldManager'
-import { buildMap }        from '../game/world/MapBuilder'
+import { StageManager }    from '../game/stage/StageManager'
 import { AudioManager }    from '../game/audio/AudioManager'
 import { HUD }             from '../game/ui/HUD'
 import { EffectSystem }    from '../game/fx/EffectSystem'
@@ -38,7 +38,6 @@ export function GameWorld({ onExit }: GameWorldProps) {
 
     // ── 모듈 초기화 ───────────────────────────────────────────────────────
     const world       = new WorldManager(mount)
-    buildMap(world.scene)
 
     const audio       = new AudioManager()
     audio.playBGM(main1Url)
@@ -60,8 +59,10 @@ export function GameWorld({ onExit }: GameWorldProps) {
     const spawnDmgNum = (pos: THREE.Vector3, amount: number, isPlayer: boolean) =>
       spawnDamageNumber(pos, amount, isPlayer, world.camera)
 
-    const damagePlayer = (amount: number, knockDir?: THREE.Vector3) => {
-      if (combat.isShielding) return          // 방패로 막기
+    const damagePlayer = (amount: number, knockDir?: THREE.Vector3, attackOrigin?: THREE.Vector3) => {
+      // 전방 방어 체크
+      if (attackOrigin && combat.tryBlockDamage(attackOrigin)) return
+      if (combat.isShielding && !attackOrigin) return  // 원점 없으면 기존 전방위 방어 유지
       playerHP = Math.max(0, playerHP - amount)
       hitFlashTimer        = 0.4
       playerMeshFlashTimer = 0.15
@@ -92,6 +93,9 @@ export function GameWorld({ onExit }: GameWorldProps) {
       () => isMounted,
     )
 
+    // destroyTerrain은 StageManager 생성 후 연결 (ref 클로저 패턴)
+    const destroyTerrainRef = { fn: (_count: number): THREE.Vector3[] => [] }
+
     const bossManager = new BossManager(
       world.scene,
       () => controller.character,
@@ -101,6 +105,7 @@ export function GameWorld({ onExit }: GameWorldProps) {
       hud,
       (dur: number) => { controller.stunTimer = dur },
       () => isMounted,
+      (count: number) => destroyTerrainRef.fn(count),
     )
 
     const combat = new PlayerCombat(
@@ -109,6 +114,15 @@ export function GameWorld({ onExit }: GameWorldProps) {
       bossManager,
     )
 
+    const stageManager = new StageManager(
+      world.scene, world, controller, playerAnim,
+      enemyManager, enemy2Manager, bossManager,
+      fx, hud, mount,
+      () => { playerHP = playerMaxHP; hud.updateHP(playerHP, playerMaxHP) },
+    )
+    destroyTerrainRef.fn = stageManager.destroyTerrain.bind(stageManager)
+    stageManager.loadStage(0)
+
     // ── 이벤트 핸들러 ─────────────────────────────────────────────────────
     const onMouseMove = (e: MouseEvent) => {
       controller.mouse.set(
@@ -116,8 +130,7 @@ export function GameWorld({ onExit }: GameWorldProps) {
         -(e.clientY / window.innerHeight) * 2 + 1,
       )
       if (controller.stunTimer > 0) return
-      if (controller.isRightMouseDown && controller.attackRightClickBlock <= 0) {
-        if (combat.isAttacking) combat.cancelAttack()
+      if (controller.inputMode === 'mouse' && controller.isRightMouseDown && controller.attackRightClickBlock <= 0 && !combat.isAttacking) {
         const hit = controller.getGroundHit()
         if (hit) controller.moveTarget = new THREE.Vector3(hit.x, 0, hit.z)
       }
@@ -126,8 +139,7 @@ export function GameWorld({ onExit }: GameWorldProps) {
     const onMouseDown = (e: MouseEvent) => {
       if (e.button === 2) {
         controller.isRightMouseDown = true
-        if (controller.stunTimer > 0 || controller.attackRightClickBlock > 0) return
-        if (combat.isAttacking) combat.cancelAttack()
+        if (controller.inputMode !== 'mouse' || controller.stunTimer > 0 || controller.attackRightClickBlock > 0 || combat.isAttacking) return
         const hit = controller.getGroundHit()
         if (hit) controller.moveTarget = new THREE.Vector3(hit.x, 0, hit.z)
       } else if (e.button === 0) {
@@ -139,17 +151,34 @@ export function GameWorld({ onExit }: GameWorldProps) {
     const onMouseUp  = (e: MouseEvent) => { if (e.button === 2) controller.isRightMouseDown = false }
     const onContextMenu = (e: MouseEvent) => e.preventDefault()
 
+    // ── 키보드 입력 모드 ─────────────────────────────────────────────────
+    const arrowState = { up: false, down: false, left: false, right: false }
+
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { onExitRef.current(); return }
+      // 방향키 (키보드 모드)
+      if (e.key === 'ArrowUp')    { arrowState.up = true;    return }
+      if (e.key === 'ArrowDown')  { arrowState.down = true;  return }
+      if (e.key === 'ArrowLeft')  { arrowState.left = true;  return }
+      if (e.key === 'ArrowRight') { arrowState.right = true; return }
+      // 키보드 모드: Ctrl = 기본 공격
+      if (controller.inputMode === 'keyboard' && e.key === 'Control') {
+        if (controller.stunTimer <= 0) combat.startAttack(); return
+      }
       if (e.key === 'q' || e.key === 'Q') { if (controller.stunTimer <= 0) combat.startQAttack(); return }
       if (e.key === 'w' || e.key === 'W') { if (controller.stunTimer <= 0) combat.startWAttack(); return }
       if (e.key === 'e' || e.key === 'E') { if (controller.stunTimer <= 0) combat.startEAttack(); return }
-      if (e.key === 'Control')             { if (controller.stunTimer <= 0) combat.activateShield(); return }
+      if (e.key === 'r' || e.key === 'R') { if (controller.stunTimer <= 0) combat.startRAttack(); return }
+      if (e.key === 'c' || e.key === 'C') { if (controller.stunTimer <= 0) combat.activateShield(); return }
       if (e.key === ' ')  { e.preventDefault(); controller.tryBlink() }
     }
 
     const onKeyUp = (e: KeyboardEvent) => {
-      if (e.key === 'Control') combat.deactivateShield()
+      if (e.key === 'c' || e.key === 'C') combat.deactivateShield()
+      if (e.key === 'ArrowUp')    arrowState.up = false
+      if (e.key === 'ArrowDown')  arrowState.down = false
+      if (e.key === 'ArrowLeft')  arrowState.left = false
+      if (e.key === 'ArrowRight') arrowState.right = false
     }
 
     const onWheel  = (e: WheelEvent)  => world.onWheel(e)
@@ -167,19 +196,36 @@ export function GameWorld({ onExit }: GameWorldProps) {
     // ── 렌더 루프 ─────────────────────────────────────────────────────────
     const clock = new THREE.Clock()
     let frameId: number
+    let killSlowmoTimer = 0   // 마지막 적 킬 슬로우모션
+
+    // 킬 슬로우모 콜백 — 적 매니저에서 마지막 적 사망 시 호출
+    const triggerKillSlowmo = () => { killSlowmoTimer = 0.25 }
+    enemyManager.onLastKill  = triggerKillSlowmo
+    enemy2Manager.onLastKill = triggerKillSlowmo
 
     const animate = () => {
       frameId = requestAnimationFrame(animate)
-      const delta = Math.min(clock.getDelta(), 0.05)
-      const t     = clock.elapsedTime
+      let delta = Math.min(clock.getDelta(), 0.05)
+      const t   = clock.elapsedTime
+
+      // 킬 슬로우모: delta 스케일링
+      if (killSlowmoTimer > 0) {
+        killSlowmoTimer -= delta
+        delta *= 0.15
+      }
+
+      // 키보드 모드 방향 입력
+      const dx = (arrowState.right ? 1 : 0) - (arrowState.left ? 1 : 0)
+      const dz = (arrowState.up ? 1 : 0) - (arrowState.down ? 1 : 0)
+      controller.setDirectionInput(dx, dz)
 
       // 모듈 업데이트
-      controller.update(delta, combat.qIsAttacking, combat.qFiredDirY, combat.isShielding, combat.wMoveLocked || combat.eIsAttacking)
+      controller.update(delta, combat.qIsAttacking, combat.qFiredDirY, combat.isShielding, combat.wMoveLocked || combat.eIsAttacking || combat.rIsAttacking)
       combat.update(delta)
       enemyManager.update(delta)
       enemy2Manager.update(delta)
       bossManager.update(delta)
-      bossManager.trySpawnIfReady(enemyManager.enemies, enemy2Manager.enemies)
+      stageManager.update(delta)
 
       // ── 충돌 분리 (겹침 방지) ──────────────────────────────────────
       const PLAYER_R = 0.7, ENEMY_R = 0.9
@@ -220,11 +266,12 @@ export function GameWorld({ onExit }: GameWorldProps) {
 
       // 공격/Q/E 중이 아닐 때 idle↔run 자동 전환
       // W는 착지(1타) 후엔 wMoveLocked=false → 이동/점멸 시 애니메이션 자동 복귀
-      if (!combat.isAttacking && !combat.qIsAttacking && !(combat.wIsAttacking && combat.wMoveLocked) && !combat.eIsAttacking)
+      if (!combat.isAttacking && !combat.qIsAttacking && !(combat.wIsAttacking && combat.wMoveLocked) && !combat.eIsAttacking && !combat.rIsAttacking && !combat.isShielding)
         playerAnim.syncMovementAnim(controller.isMoving)
 
-      // 카메라 + 조명
-      world.update(delta, t, controller.character.position, fx.screenShakeTimer)
+      // 카메라 + 조명 (마우스 look-ahead)
+      const mouseWorld = controller.getGroundHit()
+      world.update(delta, t, controller.character.position, fx.screenShakeTimer, mouseWorld)
 
       // 피격 비네트
       if (hitFlashTimer > 0) {
@@ -260,6 +307,7 @@ export function GameWorld({ onExit }: GameWorldProps) {
       if (!isMounted) return
       enemy2Manager.initFireballPool()
       world.renderer.compile(world.scene, world.camera)
+      world.renderer.render(world.scene, world.camera)  // 워밍업 렌더
       animate()
     })
 
@@ -267,6 +315,7 @@ export function GameWorld({ onExit }: GameWorldProps) {
     return () => {
       isMounted = false
       cancelAnimationFrame(frameId)
+      stageManager.dispose()
       audio.dispose()
       hud.dispose()
       world.dispose()

@@ -2,7 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { createGame } from './game/index'
 import { App } from './ui/App'
-import './ui/preloader' // 앱 시작 즉시 FBX 백그라운드 로딩 시작
+// preloader는 LoadingScreen에서 startPreload() 호출 시 시작 (메뉴 버벅임 방지)
 
 // Phaser 게임 인스턴스 생성 (canvas → #game-container)
 const game = createGame('game-container')

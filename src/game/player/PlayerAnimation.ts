@@ -76,7 +76,7 @@ export class PlayerAnimation {
     this.attackAction.timeScale = 3
     this.attackAction.loop = THREE.LoopOnce
     this.attackAction.clampWhenFinished = true
-    this.attackDuration = this.pendingAttackClip.duration / 3
+    this.attackDuration = Math.max(0.15, this.pendingAttackClip.duration / 3)
   }
 
   private applyQAttackClip() {
@@ -137,6 +137,8 @@ export class PlayerAnimation {
 
       this.applyRunClip(); this.applyAttackClip(); this.applyQAttackClip()
       this.applyWAttackClip(); this.applyEAttackClip()
+      // 블렌딩 그래프 사전 평가 — 첫 공격 프레임 히치 방지
+      if (this.mixer) this.mixer.update(0)
       this.scene.remove(placeholder)
       this.scene.add(group)
       this.character = group

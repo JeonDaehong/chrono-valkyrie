@@ -25,114 +25,105 @@ import boss1DeathUrl       from '@assets/img/enemy/boss1_death.fbx?url'
 
 export type GlbData = { group: THREE.Group; animations: THREE.AnimationClip[] }
 
-export const idleGlbPromise: Promise<GlbData> = new Promise((resolve, reject) => {
-  new GLTFLoader().load(
-    idleGlbUrl,
-    (gltf) => resolve({ group: gltf.scene, animations: gltf.animations }),
-    undefined,
-    reject,
-  )
-})
+// ── 지연 Promise 생성 (import 시에는 빈 Promise 껍데기만 생성, 메인스레드 부하 0) ──
+type Deferred<T> = { promise: Promise<T>; resolve: (v: T) => void; reject: (e: unknown) => void }
+function deferred<T>(): Deferred<T> {
+  let resolve!: (v: T) => void
+  let reject!: (e: unknown) => void
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej })
+  return { promise, resolve, reject }
+}
 
-// run.glb: 이동 모션
-export const runGlbPromise: Promise<GlbData> = new Promise((resolve, reject) => {
-  new GLTFLoader().load(
-    moveGlbUrl,
-    (gltf) => resolve({ group: gltf.scene, animations: gltf.animations }),
-    undefined,
-    reject,
-  )
-})
+const _idle   = deferred<GlbData>()
+const _run    = deferred<GlbData>()
+const _attack = deferred<GlbData>()
+const _qAtk   = deferred<GlbData>()
+const _wAtk   = deferred<GlbData>()
+const _eAtk   = deferred<GlbData>()
 
-// attack1.glb: 공격 모션
-export const attackGlbPromise: Promise<GlbData> = new Promise((resolve, reject) => {
-  new GLTFLoader().load(
-    attackGlbUrl,
-    (gltf) => resolve({ group: gltf.scene, animations: gltf.animations }),
-    undefined,
-    reject,
-  )
-})
+const _e1Idle   = deferred<THREE.Group>()
+const _e1Run    = deferred<THREE.Group>()
+const _e1Attack = deferred<THREE.Group>()
+const _e1Death  = deferred<THREE.Group>()
 
-// q_attack.glb: Q 스킬 모션
-export const qAttackGlbPromise: Promise<GlbData> = new Promise((resolve, reject) => {
-  new GLTFLoader().load(
-    qAttackGlbUrl,
-    (gltf) => resolve({ group: gltf.scene, animations: gltf.animations }),
-    undefined,
-    reject,
-  )
-})
+const _e2Idle   = deferred<THREE.Group>()
+const _e2Run    = deferred<THREE.Group>()
+const _e2Attack = deferred<THREE.Group>()
+const _e2Death  = deferred<THREE.Group>()
 
-// w_attack.glb: W 스킬 (점프 내리찍기)
-export const wAttackGlbPromise: Promise<GlbData> = new Promise((resolve, reject) => {
-  new GLTFLoader().load(
-    wAttackGlbUrl,
-    (gltf) => resolve({ group: gltf.scene, animations: gltf.animations }),
-    undefined,
-    reject,
-  )
-})
+const _fireball = deferred<THREE.Group>()
 
-// e_attack.glb: E 스킬 + Ctrl 방패 모션
-export const eAttackGlbPromise: Promise<GlbData> = new Promise((resolve, reject) => {
-  new GLTFLoader().load(
-    eAttackGlbUrl,
-    (gltf) => resolve({ group: gltf.scene, animations: gltf.animations }),
-    undefined,
-    reject,
-  )
-})
+const _b1Idle   = deferred<THREE.Group>()
+const _b1Run    = deferred<THREE.Group>()
+const _b1Atk    = deferred<THREE.Group>()
+const _b1Atk2   = deferred<THREE.Group>()
+const _b1Jump   = deferred<THREE.Group>()
+const _b1Death  = deferred<THREE.Group>()
 
-// 오글 적 FBX (Idle = 기본 메시 + 클립, 나머지는 클립만 사용)
-export const enemy1IdleFbxPromise: Promise<THREE.Group> = new Promise((resolve, reject) => {
-  new FBXLoader().load(enemy1IdleUrl, resolve, undefined, reject)
-})
-export const enemy1RunFbxPromise: Promise<THREE.Group> = new Promise((resolve, reject) => {
-  new FBXLoader().load(enemy1RunUrl, resolve, undefined, reject)
-})
-export const enemy1AttackFbxPromise: Promise<THREE.Group> = new Promise((resolve, reject) => {
-  new FBXLoader().load(enemy1AttackUrl, resolve, undefined, reject)
-})
-export const enemy1DeathFbxPromise: Promise<THREE.Group> = new Promise((resolve, reject) => {
-  new FBXLoader().load(enemy1DeathUrl, resolve, undefined, reject)
-})
+// ── 외부 API: Promise (기존 인터페이스 100% 호환) ────────────────────────
+export const idleGlbPromise   = _idle.promise
+export const runGlbPromise    = _run.promise
+export const attackGlbPromise = _attack.promise
+export const qAttackGlbPromise  = _qAtk.promise
+export const wAttackGlbPromise  = _wAtk.promise
+export const eAttackGlbPromise  = _eAtk.promise
 
-// enemy2 FBX (원거리 적)
-export const enemy2IdleFbxPromise: Promise<THREE.Group> = new Promise((resolve, reject) => {
-  new FBXLoader().load(enemy2IdleUrl, resolve, undefined, reject)
-})
-export const enemy2RunFbxPromise: Promise<THREE.Group> = new Promise((resolve, reject) => {
-  new FBXLoader().load(enemy2RunUrl, resolve, undefined, reject)
-})
-export const enemy2AttackFbxPromise: Promise<THREE.Group> = new Promise((resolve, reject) => {
-  new FBXLoader().load(enemy2AttackUrl, resolve, undefined, reject)
-})
-export const enemy2DeathFbxPromise: Promise<THREE.Group> = new Promise((resolve, reject) => {
-  new FBXLoader().load(enemy2DeathUrl, resolve, undefined, reject)
-})
+export const enemy1IdleFbxPromise   = _e1Idle.promise
+export const enemy1RunFbxPromise    = _e1Run.promise
+export const enemy1AttackFbxPromise = _e1Attack.promise
+export const enemy1DeathFbxPromise  = _e1Death.promise
 
-// 파이어볼 투사체 FBX
-export const fireballFbxPromise: Promise<THREE.Group> = new Promise((resolve, reject) => {
-  new FBXLoader().load(fireballUrl, resolve, undefined, reject)
-})
+export const enemy2IdleFbxPromise   = _e2Idle.promise
+export const enemy2RunFbxPromise    = _e2Run.promise
+export const enemy2AttackFbxPromise = _e2Attack.promise
+export const enemy2DeathFbxPromise  = _e2Death.promise
 
-// 보스1 FBX
-export const boss1IdleFbxPromise: Promise<THREE.Group> = new Promise((resolve, reject) => {
-  new FBXLoader().load(boss1IdleUrl, resolve, undefined, reject)
-})
-export const boss1RunFbxPromise: Promise<THREE.Group> = new Promise((resolve, reject) => {
-  new FBXLoader().load(boss1RunUrl, resolve, undefined, reject)
-})
-export const boss1AttackFbxPromise: Promise<THREE.Group> = new Promise((resolve, reject) => {
-  new FBXLoader().load(boss1AttackUrl, resolve, undefined, reject)
-})
-export const boss1Attack2FbxPromise: Promise<THREE.Group> = new Promise((resolve, reject) => {
-  new FBXLoader().load(boss1Attack2Url, resolve, undefined, reject)
-})
-export const boss1JumpAttackFbxPromise: Promise<THREE.Group> = new Promise((resolve, reject) => {
-  new FBXLoader().load(boss1JumpAttackUrl, resolve, undefined, reject)
-})
-export const boss1DeathFbxPromise: Promise<THREE.Group> = new Promise((resolve, reject) => {
-  new FBXLoader().load(boss1DeathUrl, resolve, undefined, reject)
-})
+export const fireballFbxPromise = _fireball.promise
+
+export const boss1IdleFbxPromise       = _b1Idle.promise
+export const boss1RunFbxPromise        = _b1Run.promise
+export const boss1AttackFbxPromise     = _b1Atk.promise
+export const boss1Attack2FbxPromise    = _b1Atk2.promise
+export const boss1JumpAttackFbxPromise = _b1Jump.promise
+export const boss1DeathFbxPromise      = _b1Death.promise
+
+// ── startPreload: LoadingScreen에서 호출 → 이 때 비로소 네트워크+파싱 시작 ──
+let started = false
+export function startPreload() {
+  if (started) return
+  started = true
+
+  const glb = new GLTFLoader()
+  const fbx = new FBXLoader()
+
+  const loadGlb = (url: string, d: Deferred<GlbData>) =>
+    glb.load(url, (gltf) => d.resolve({ group: gltf.scene, animations: gltf.animations }), undefined, d.reject)
+  const loadFbx = (url: string, d: Deferred<THREE.Group>) =>
+    fbx.load(url, d.resolve, undefined, d.reject)
+
+  loadGlb(idleGlbUrl, _idle)
+  loadGlb(moveGlbUrl, _run)
+  loadGlb(attackGlbUrl, _attack)
+  loadGlb(qAttackGlbUrl, _qAtk)
+  loadGlb(wAttackGlbUrl, _wAtk)
+  loadGlb(eAttackGlbUrl, _eAtk)
+
+  loadFbx(enemy1IdleUrl, _e1Idle)
+  loadFbx(enemy1RunUrl, _e1Run)
+  loadFbx(enemy1AttackUrl, _e1Attack)
+  loadFbx(enemy1DeathUrl, _e1Death)
+
+  loadFbx(enemy2IdleUrl, _e2Idle)
+  loadFbx(enemy2RunUrl, _e2Run)
+  loadFbx(enemy2AttackUrl, _e2Attack)
+  loadFbx(enemy2DeathUrl, _e2Death)
+
+  loadFbx(fireballUrl, _fireball)
+
+  loadFbx(boss1IdleUrl, _b1Idle)
+  loadFbx(boss1RunUrl, _b1Run)
+  loadFbx(boss1AttackUrl, _b1Atk)
+  loadFbx(boss1Attack2Url, _b1Atk2)
+  loadFbx(boss1JumpAttackUrl, _b1Jump)
+  loadFbx(boss1DeathUrl, _b1Death)
+}

@@ -23,6 +23,9 @@ export class EffectSystem {
   // ── 파이어볼 꼬리 스파크 (라이트 풀 미사용) ──────────────────────────
   private trailSparks: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; vel: THREE.Vector3; age: number; dur: number }[] = []
 
+  // ── 무기 스윙 트레일 ───────────────────────────────────────────────
+  private swingTrails: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; age: number; dur: number }[] = []
+
   private smallGeo       = new THREE.SphereGeometry(0.06, 4, 4)
   private slashArcGeo    = new THREE.TorusGeometry(1, 0.07, 6, 28, Math.PI * 0.75)
   private groundRingGeo  = new THREE.RingGeometry(0.85, 1.0, 36)
@@ -338,6 +341,19 @@ export class EffectSystem {
     this.spawnRing(x, z, 0xaa00ff, 14.0, 0.75)
   }
 
+  // ── R 미사일 폭발 ────────────────────────────────────────────────────
+  spawnRExplosion(pos: THREE.Vector3) {
+    const x = pos.x, z = pos.z
+    // 시안/파란 파티클 폭발
+    this.spawnFx(this.hitFxList,  x, z, 0x00ccff, 0x0088ff, 36, 0, Math.PI * 2, 0x00aaff, 18)
+    this.spawnFx(this.elecFxList, x, z, 0x4488ff, 0xffffff, 24, 0, Math.PI * 2, 0x0066ff, 14)
+    // 충격파 링
+    this.spawnRing(x, z, 0x00ccff, 3.0, 0.3)
+    this.spawnRing(x, z, 0x4488ff, 5.0, 0.45)
+    // 화면 흔들림
+    this.screenShakeTimer = Math.max(this.screenShakeTimer, 0.15)
+  }
+
   // ── 적 사망 폭발 ─────────────────────────────────────────────────────
   spawnDeathExplosion(pos: THREE.Vector3, isBoss = false) {
     const x = pos.x, z = pos.z
@@ -393,6 +409,23 @@ export class EffectSystem {
         age: 0, dur: 0.22,
       })
     }
+  }
+
+  /** 무기 스윙 트레일 (콤보 단계별 색상) */
+  spawnSwingTrail(pos: THREE.Vector3, dirY: number, comboStep: number) {
+    const colors = [0x00ccff, 0x44aaff, 0xff8844]
+    const color = colors[Math.min(comboStep, colors.length - 1)]
+    const arcGeo = new THREE.TorusGeometry(1.6 + comboStep * 0.3, 0.12 - comboStep * 0.01, 4, 24, Math.PI * 0.9)
+    const mat = new THREE.MeshBasicMaterial({
+      color, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false,
+    })
+    const mesh = new THREE.Mesh(arcGeo, mat)
+    mesh.frustumCulled = false
+    mesh.position.set(pos.x + Math.sin(dirY) * 1.2, 1.0 + comboStep * 0.15, pos.z + Math.cos(dirY) * 1.2)
+    mesh.rotation.set(Math.PI * 0.3 + comboStep * 0.1, dirY + (comboStep % 2 === 0 ? 0 : Math.PI * 0.15), 0)
+    mesh.scale.setScalar(0.8 + comboStep * 0.2)
+    this.scene.add(mesh)
+    this.swingTrails.push({ mesh, mat, age: 0, dur: 0.2 })
   }
 
   spawnFireCone(ox: number, oz: number, dirY: number) {
@@ -489,6 +522,20 @@ export class EffectSystem {
       fx.mesh.scale.y = (1 + p * 2.5)
       ;(fx.mesh.material as THREE.MeshBasicMaterial).opacity = 0.92 * Math.pow(1 - p, 1.5)
       if (p >= 1) { this.releaseFlame(fx.mesh); this.flameFxList.splice(i, 1) }
+    }
+
+    // 스윙 트레일
+    for (let i = this.swingTrails.length - 1; i >= 0; i--) {
+      const st = this.swingTrails[i]; st.age += delta
+      const p = st.age / st.dur
+      st.mat.opacity = 0.85 * Math.max(0, 1 - p)
+      st.mesh.scale.multiplyScalar(1 + delta * 3)
+      if (p >= 1) {
+        this.scene.remove(st.mesh)
+        st.mesh.geometry.dispose()
+        st.mat.dispose()
+        this.swingTrails.splice(i, 1)
+      }
     }
 
     for (let i = this.trailSparks.length - 1; i >= 0; i--) {

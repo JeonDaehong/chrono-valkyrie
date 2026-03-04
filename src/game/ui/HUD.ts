@@ -16,6 +16,10 @@ export class HUD {
   private skillEls: Map<string, { key: HTMLDivElement; fill: HTMLDivElement }> = new Map()
   private stunOverlay!: HTMLDivElement
   private stunText!: HTMLDivElement
+  private screenFlash!: HTMLDivElement
+  private hpGhost!: HTMLDivElement
+  private ghostTarget = 1.0   // ghost bar 목표 비율
+  private shieldGaugeInner!: HTMLDivElement
 
   constructor(private mount: HTMLDivElement) {
     this.createHPBar()
@@ -25,6 +29,7 @@ export class HUD {
     this.createBossHPBar()
     this.createSkillBar()
     this.createStunOverlay()
+    this.createScreenFlash()
   }
 
   private createHPBar() {
@@ -38,12 +43,29 @@ export class HUD {
     outer.style.cssText =
       'width:180px;height:10px;background:#111;border:1px solid #334;border-radius:3px;overflow:hidden'
 
+    this.hpGhost = document.createElement('div')
+    this.hpGhost.style.cssText =
+      'position:absolute;top:0;left:0;width:100%;height:100%;background:#ccaa00;border-radius:3px;transition:width 0.8s ease-out'
+
     this.hpBarInner = document.createElement('div')
     this.hpBarInner.style.cssText =
-      'width:100%;height:100%;background:linear-gradient(90deg,#00ff88,#00cc66);border-radius:3px;transition:width 0.1s'
+      'position:absolute;top:0;left:0;width:100%;height:100%;background:linear-gradient(90deg,#00ff88,#00cc66);border-radius:3px;transition:width 0.1s'
 
+    outer.style.cssText += ';position:relative'
+    outer.appendChild(this.hpGhost)
     outer.appendChild(this.hpBarInner)
     this.hpBarWrap.appendChild(outer)
+
+    // ── 쉴드 게이지 바 (HP 바 아래) ──
+    const shieldOuter = document.createElement('div')
+    shieldOuter.style.cssText =
+      'width:180px;height:6px;background:#112;border:1px solid #224;border-radius:2px;overflow:hidden;margin-top:4px;position:relative'
+    this.shieldGaugeInner = document.createElement('div')
+    this.shieldGaugeInner.style.cssText =
+      'position:absolute;top:0;left:0;width:100%;height:100%;background:linear-gradient(90deg,#0066ff,#00aaff);border-radius:2px;transition:width 0.1s'
+    shieldOuter.appendChild(this.shieldGaugeInner)
+    this.hpBarWrap.appendChild(shieldOuter)
+
     this.mount.appendChild(this.hpBarWrap)
   }
 
@@ -159,7 +181,8 @@ export class HUD {
     const skills: { key: string; label: string; color: string; glow: string }[] = [
       { key: 'W',    label: 'W',    color: '#0088ff', glow: '#0066ff' },
       { key: 'E',    label: 'E',    color: '#aa44ff', glow: '#8800ff' },
-      { key: 'Ctrl', label: '⛊',   color: '#00ffcc', glow: '#00ccaa' },
+      { key: 'R',    label: 'R',    color: '#00aaff', glow: '#0088ff' },
+      { key: 'C',    label: '⛊',   color: '#4488ff', glow: '#2266dd' },
     ]
 
     for (const s of skills) {
@@ -207,6 +230,20 @@ export class HUD {
     this.mount.appendChild(this.stunText)
   }
 
+  private createScreenFlash() {
+    this.screenFlash = document.createElement('div')
+    this.screenFlash.style.cssText =
+      'position:fixed;inset:0;pointer-events:none;z-index:199;opacity:0;background:#fff;transition:opacity 0.05s'
+    this.mount.appendChild(this.screenFlash)
+  }
+
+  /** 화면 전체 플래시 (1~2프레임 번쩍) */
+  triggerScreenFlash(color = '#ffffff', duration = 0.08) {
+    this.screenFlash.style.background = color
+    this.screenFlash.style.opacity = '0.35'
+    setTimeout(() => { this.screenFlash.style.opacity = '0' }, duration * 1000)
+  }
+
   showStun() {
     const pulse = 0.45 + 0.45 * Math.abs(Math.sin(Date.now() * 0.005))
     this.stunOverlay.style.opacity = `${pulse}`
@@ -235,7 +272,12 @@ export class HUD {
 
   updateSkillW(cooldown: number, max: number)    { this.updateSkill('W',    cooldown, max, '#0088ff', '#0066ff') }
   updateSkillE(cooldown: number, max: number)    { this.updateSkill('E',    cooldown, max, '#aa44ff', '#8800ff') }
-  updateSkillCtrl(cooldown: number, max: number) { this.updateSkill('Ctrl', cooldown, max, '#00ffcc', '#00ccaa') }
+  updateSkillR(cooldown: number, max: number)    { this.updateSkill('R',    cooldown, max, '#00aaff', '#0088ff') }
+  updateSkillC(cooldown: number, max: number)    { this.updateSkill('C',    cooldown, max, '#4488ff', '#2266dd') }
+
+  updateShieldGauge(ratio: number) {
+    this.shieldGaugeInner.style.width = `${Math.max(0, Math.min(1, ratio)) * 100}%`
+  }
 
   showBossHP() {
     this.bossHPWrap.style.display = 'block'
@@ -261,6 +303,13 @@ export class HUD {
       r > 0.5 ? 'linear-gradient(90deg,#00ff88,#00cc66)'
       : r > 0.25 ? 'linear-gradient(90deg,#ffaa00,#ff6600)'
       : 'linear-gradient(90deg,#ff3300,#cc0000)'
+    // ghost bar: 현재 HP보다 높으면 천천히 드레인
+    if (r < this.ghostTarget) {
+      setTimeout(() => { this.hpGhost.style.width = `${r * 100}%` }, 300)
+    } else {
+      this.hpGhost.style.width = `${r * 100}%`
+    }
+    this.ghostTarget = r
   }
 
   setVignetteOpacity(opacity: number) {
@@ -299,5 +348,6 @@ export class HUD {
     if (this.mount.contains(this.skillBar))    this.mount.removeChild(this.skillBar)
     if (this.mount.contains(this.stunOverlay)) this.mount.removeChild(this.stunOverlay)
     if (this.mount.contains(this.stunText))    this.mount.removeChild(this.stunText)
+    if (this.mount.contains(this.screenFlash)) this.mount.removeChild(this.screenFlash)
   }
 }

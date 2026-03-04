@@ -61,10 +61,11 @@ export class AudioManager {
   }
 
   // ── SFX ──────────────────────────────────────────────────────────────
-  playSound(url: string, baseVolume = 1.0) {
+  playSound(url: string, baseVolume = 1.0, pitchRand = 0) {
     if (this.sfxMuted) return
     const audio    = new Audio(url)
     audio.volume   = Math.min(1, baseVolume * this.sfxVolume)
+    if (pitchRand > 0) audio.playbackRate = 1 - pitchRand + Math.random() * pitchRand * 2
     audio.play().catch(() => {})
   }
 

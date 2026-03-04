@@ -18,6 +18,7 @@ import {
   ENEMY2_ATTACK_INTERVAL, ENEMY2_FIRE_DELAY,
   FIREBALL_DMG, FIREBALL_SPEED, FIREBALL_HIT_RADIUS, FIREBALL_MAX_AGE,
 } from '../shared/constants'
+import { clampToZones, type WalkableZone } from '../stage/StageConfig'
 
 // ── 파이어볼 풀 엔트리 ─────────────────────────────────────────────────────
 interface FbPoolEntry {
@@ -44,6 +45,11 @@ const FB_POOL_SIZE = 10   // 동시 최대 파이어볼 수 (적 7마리 × 여�
 
 export class Enemy2Manager {
   enemies:  EnemyData[] = []
+  clipsReady = false
+  onLastKill: (() => void) | null = null
+  private _zones: WalkableZone[] | null = null
+
+  setWalkableZones(zones: WalkableZone[]) { this._zones = zones }
 
   private baseGroup:  THREE.Group | null = null
   private idleClip:   THREE.AnimationClip | null = null
@@ -60,6 +66,8 @@ export class Enemy2Manager {
 
   // ── 1자 궤도 선 메시 관리 ────────────────────────────────────────────────
   private attackLineMeshes = new Map<EnemyData, THREE.Mesh>()
+  /** 궤도 표시 시 저장한 발사 방향 (궤도와 실제 탄도 일치시키기) */
+  private attackDirMap = new Map<EnemyData, THREE.Vector3>()
   private lineTimer = 0
 
   constructor(
@@ -67,7 +75,7 @@ export class Enemy2Manager {
     private getCharacter: () => THREE.Group,
     private fx:           EffectSystem,
     private audio:        AudioManager,
-    private damagePlayer: (amount: number, knockDir?: THREE.Vector3) => void,
+    private damagePlayer: (amount: number, knockDir?: THREE.Vector3, attackOrigin?: THREE.Vector3) => void,
     private spawnDmgNum:  (pos: THREE.Vector3, amount: number, isPlayer: boolean) => void,
     private isMounted:    () => boolean,
   ) {
@@ -80,32 +88,37 @@ export class Enemy2Manager {
       if (!this.isMounted()) return
       this.baseGroup = fbx
       if (fbx.animations.length > 0) this.idleClip = fbx.animations[0]
-      this.trySpawn()
+      this.checkClipsReady()
     }).catch(e => console.error('[Enemy2] idle:', e))
 
     enemy2RunFbxPromise.then(fbx => {
       if (!this.isMounted()) return
       if (fbx.animations.length > 0) this.runClip = fbx.animations[0]
-      this.trySpawn()
+      this.checkClipsReady()
     }).catch(e => console.error('[Enemy2] run:', e))
 
     enemy2AttackFbxPromise.then(fbx => {
       if (!this.isMounted()) return
       if (fbx.animations.length > 0) this.attackClip = fbx.animations[0]
-      this.trySpawn()
+      this.checkClipsReady()
     }).catch(e => console.error('[Enemy2] attack:', e))
 
     enemy2DeathFbxPromise.then(fbx => {
       if (!this.isMounted()) return
       if (fbx.animations.length > 0) this.deathClip = fbx.animations[0]
-      this.trySpawn()
+      this.checkClipsReady()
     }).catch(e => console.error('[Enemy2] death:', e))
 
     fireballFbxPromise.then(fbx => {
       if (!this.isMounted()) return
       this.fireballBase = fbx
-      this.initFireballPool()   // 로드 즉시 풀 생성 → renderer.compile() 전에 씬에 추가
+      this.initFireballPool()
     }).catch(e => console.error('[Enemy2] fireball:', e))
+  }
+
+  private checkClipsReady() {
+    if (this.baseGroup && this.idleClip && this.runClip && this.attackClip && this.deathClip)
+      this.clipsReady = true
   }
 
   // ── 파이어볼 풀 초기화 (씬에 미리 추가, visible=false) ─────────────────
@@ -166,18 +179,11 @@ export class Enemy2Manager {
     this.fbFree.push(poolIdx)
   }
 
-  // ── 스폰 ─────────────────────────────────────────────────────────────
-  private trySpawn() {
-    if (!this.baseGroup || !this.idleClip || !this.runClip || !this.attackClip || !this.deathClip) return
-    if (this.enemies.length > 0) return
-
-    const positions: [number, number][] = [
-      [0, -18], [18, 0], [0, 18], [-18, 0],
-      [13, 13], [-13, 13], [13, -13],
-    ]
-
+  /** 지정 위치에 적 스폰 */
+  spawnAt(positions: [number, number][]) {
+    if (!this.clipsReady) return
     for (const [sx, sz] of positions) {
-      const group = SkeletonUtils.clone(this.baseGroup) as THREE.Group
+      const group = SkeletonUtils.clone(this.baseGroup!) as THREE.Group
       group.scale.setScalar(0.02)
       group.position.set(sx + (Math.random() - 0.5) * 3, 0, sz + (Math.random() - 0.5) * 3)
       group.traverse((c: THREE.Object3D) => {
@@ -199,7 +205,6 @@ export class Enemy2Manager {
       deathAction.loop  = THREE.LoopOnce; deathAction.clampWhenFinished = true
       idleAction.play()
 
-      // 원거리 적은 사거리 표시 없음 — EnemyData 인터페이스 호환용 더미
       const ring = new THREE.Mesh()
 
       this.enemies.push({
@@ -212,6 +217,35 @@ export class Enemy2Manager {
         hitStopTimer: 0,
       })
     }
+  }
+
+  /** 모든 적 + 파이어볼 정리 + GPU 리소스 해제 */
+  clearAll() {
+    for (const e of this.enemies) {
+      this.scene.remove(e.group)
+      this.scene.remove(e.attackRing)
+      this.removeAttackLine(e)
+      // attack ring dispose
+      e.attackRing.geometry.dispose()
+      ;(e.attackRing.material as THREE.Material).dispose()
+      // cloned FBX mesh dispose
+      e.group.traverse((child) => {
+        const mesh = child as THREE.Mesh
+        if (mesh.isMesh) {
+          mesh.geometry?.dispose()
+          const mat = mesh.material
+          if (Array.isArray(mat)) mat.forEach(m => m.dispose())
+          else if (mat) (mat as THREE.Material).dispose()
+        }
+      })
+      e.mixer.stopAllAction()
+      e.mixer.uncacheRoot(e.group)
+    }
+    this.enemies = []
+    this.attackDirMap.clear()
+    // 활성 파이어볼 해제
+    for (const fb of this.fireballs) this.releaseFireball(fb.poolIdx)
+    this.fireballs = []
   }
 
   // ── 데미지 ───────────────────────────────────────────────────────────
@@ -229,6 +263,8 @@ export class Enemy2Manager {
       enemy.deathTimer = 3
       this.fx.spawnDeathExplosion(enemy.group.position, false)
       this.audio.playSound(enemyDeathUrl, 0.7)
+      const alive = this.enemies.filter(e => !e.isDead)
+      if (alive.length === 0 && this.onLastKill) this.onLastKill()
     } else {
       this.audio.playSound(enemyHitUrl, 0.6)
     }
@@ -242,8 +278,14 @@ export class Enemy2Manager {
     const ez     = enemy.group.position.z
     const dx     = char.position.x - ex
     const dz     = char.position.z - ez
+    const len    = Math.sqrt(dx * dx + dz * dz)
     const angle  = Math.atan2(dx, dz)
     const lineLen = 30
+
+    // 발사 방향 저장 (궤도 표시 시점의 방향 고정)
+    if (len > 0.01) {
+      this.attackDirMap.set(enemy, new THREE.Vector3(dx / len, 0, dz / len))
+    }
 
     const geo  = new THREE.BoxGeometry(0.4, 0.1, lineLen)
     const mat  = new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 0.6 })
@@ -263,8 +305,14 @@ export class Enemy2Manager {
     const mesh = this.attackLineMeshes.get(enemy)
     if (mesh) {
       this.scene.remove(mesh)
+      mesh.geometry.dispose()
+      ;(mesh.material as THREE.Material).dispose()
       this.attackLineMeshes.delete(enemy)
     }
+  }
+
+  private getAttackDir(enemy: EnemyData): THREE.Vector3 | null {
+    return this.attackDirMap.get(enemy) ?? null
   }
 
   // ── 상태 머신 ─────────────────────────────────────────────────────────
@@ -315,7 +363,8 @@ export class Enemy2Manager {
   }
 
   // ── 파이어볼 스폰 (풀에서 취득) ───────────────────────────────────────
-  private spawnFireball(from: THREE.Vector3, to: THREE.Vector3) {
+  /** dir: 정규화된 발사 방향 */
+  private spawnFireball(from: THREE.Vector3, dir: THREE.Vector3) {
     const spawnY  = from.y + 1.4
     const acquired = this.acquireFireball(from.x, spawnY, from.z)
     if (!acquired) return   // 풀 소진 시 무시
@@ -324,8 +373,7 @@ export class Enemy2Manager {
     light.color.setHex(0xff4400)
     light.distance = 8
 
-    const dir = new THREE.Vector3(to.x - from.x, 0, to.z - from.z).normalize()
-    const vel = dir.multiplyScalar(FIREBALL_SPEED)
+    const vel = dir.clone().multiplyScalar(FIREBALL_SPEED)
 
     this.fireballs.push({ mesh, mixer: fbMixer, light, vel, age: 0, hitDealt: false, poolIdx, trailTimer: 0 })
     this.audio.playSound(bangUrl, 0.35)
@@ -396,6 +444,10 @@ export class Enemy2Manager {
       if (enemy.state === 'run' && dist > 0.1) {
         enemy.group.position.x += (dx / dist) * ENEMY2_MOVE_SPEED * delta
         enemy.group.position.z += (dz / dist) * ENEMY2_MOVE_SPEED * delta
+        if (this._zones) {
+          const [cx, cz] = clampToZones(enemy.group.position.x, enemy.group.position.z, this._zones)
+          enemy.group.position.x = cx; enemy.group.position.z = cz
+        }
         enemy.group.rotation.y = Math.atan2(dx, dz)
       } else if (enemy.state === 'attack') {
         enemy.group.rotation.y = Math.atan2(dx, dz)
@@ -403,14 +455,23 @@ export class Enemy2Manager {
         if (dist < ENEMY2_MIN_DIST && dist > 0.1) {
           enemy.group.position.x -= (dx / dist) * ENEMY2_MOVE_SPEED * 0.6 * delta
           enemy.group.position.z -= (dz / dist) * ENEMY2_MOVE_SPEED * 0.6 * delta
+          if (this._zones) {
+            const [cx, cz] = clampToZones(enemy.group.position.x, enemy.group.position.z, this._zones)
+            enemy.group.position.x = cx; enemy.group.position.z = cz
+          }
         }
 
         enemy.attackTimer += delta
 
         if (!enemy.attackHitDealt && enemy.attackTimer >= ENEMY2_FIRE_DELAY) {
           enemy.attackHitDealt = true
-          this.spawnFireball(enemy.group.position.clone(), char.position.clone())
+          // 궤도 표시 시 저장한 방향으로 발사 (궤도 = 실제 탄도)
+          const savedDir = this.getAttackDir(enemy)
+          if (savedDir) {
+            this.spawnFireball(enemy.group.position.clone(), savedDir)
+          }
           this.removeAttackLine(enemy)   // 발사 시 궤도 선 제거
+          this.attackDirMap.delete(enemy)
         }
 
         if (enemy.attackTimer >= ENEMY2_ATTACK_INTERVAL) {
@@ -463,7 +524,7 @@ export class Enemy2Manager {
           fb.hitDealt = true
           // 파이어볼 진행 방향으로 넉백
           const knockDir = fb.vel.clone().normalize()
-          this.damagePlayer(FIREBALL_DMG, knockDir)
+          this.damagePlayer(FIREBALL_DMG, knockDir, fb.mesh.position.clone())
           this.fx.spawnHitOnPos(fb.mesh.position.x, fb.mesh.position.z)
           this.fx.spawnRing(fb.mesh.position.x, fb.mesh.position.z, 0xff4400, 2.5, 0.3)
         }

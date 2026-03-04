@@ -18,15 +18,15 @@ export function spawnDamageNumber(
   document.body.appendChild(div)
 
   const start = worldPos.clone()
-  let age = 0
+  const startTime = performance.now()
   const tick = () => {
-    age += 0.016
+    const age = (performance.now() - startTime) / 1000
     const p = start.clone()
     p.y += age * 2.5
     const ndc = p.project(camera)
     div.style.left = `${(ndc.x + 1) / 2 * window.innerWidth}px`
     div.style.top  = `${(1 - ndc.y) / 2 * window.innerHeight}px`
-    div.style.opacity = `${Math.max(0, 1 - age / 1.0)}`
+    div.style.opacity = `${Math.max(0, 1 - age)}`
     if (age < 1.0) requestAnimationFrame(tick)
     else if (document.body.contains(div)) document.body.removeChild(div)
   }

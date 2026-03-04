@@ -7,6 +7,7 @@ export class WorldManager {
   dirLight!: THREE.DirectionalLight
   flickerLights: THREE.PointLight[] = []
   zoomScale = 1.0
+  cameraBound = 22
 
   private camLookX = 0
   private camLookZ = 0
@@ -73,10 +74,22 @@ export class WorldManager {
     this.camera.updateProjectionMatrix()
   }
 
-  update(delta: number, t: number, charPos: THREE.Vector3, screenShakeTimer: number) {
-    const CB = 22
-    const tlx = Math.max(-CB, Math.min(CB, charPos.x))
-    const tlz = Math.max(-CB, Math.min(CB, charPos.z))
+  update(delta: number, t: number, charPos: THREE.Vector3, screenShakeTimer: number, mouseWorld?: THREE.Vector3 | null) {
+    const CB = this.cameraBound
+    // 마우스 방향 look-ahead: 캐릭터 → 마우스 방향으로 2.5 유닛 오프셋
+    let lookAheadX = 0, lookAheadZ = 0
+    if (mouseWorld) {
+      const dx = mouseWorld.x - charPos.x
+      const dz = mouseWorld.z - charPos.z
+      const d  = Math.sqrt(dx * dx + dz * dz)
+      if (d > 0.1) {
+        const clamp = Math.min(d, 12)  // 마우스 거리 제한
+        lookAheadX = (dx / d) * clamp * 0.2
+        lookAheadZ = (dz / d) * clamp * 0.2
+      }
+    }
+    const tlx = Math.max(-CB, Math.min(CB, charPos.x + lookAheadX))
+    const tlz = Math.max(-CB, Math.min(CB, charPos.z + lookAheadZ))
     const lerpT = Math.min(1, 10 * delta)
     this.camLookX += (tlx - this.camLookX) * lerpT
     this.camLookZ += (tlz - this.camLookZ) * lerpT
