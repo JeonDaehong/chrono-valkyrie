@@ -64,11 +64,17 @@ export class Enemy2Manager {
   private fbPool:   FbPoolEntry[] = []
   private fbFree:   number[]      = []   // 사용 가능한 인덱스 스택
 
-  // ── 1자 궤도 선 메시 관리 ────────────────────────────────────────────────
+  // ── 1자 궤도 선 메시 관리 (풀) ──────────────────────────────────────────
   private attackLineMeshes = new Map<EnemyData, THREE.Mesh>()
   /** 궤도 표시 시 저장한 발사 방향 (궤도와 실제 탄도 일치시키기) */
   private attackDirMap = new Map<EnemyData, THREE.Vector3>()
   private lineTimer = 0
+
+  // ── 공유 지오메트리/머터리얼 (GPU 업로드 1회) ─────────────────────────
+  private sharedLineGeo = new THREE.BoxGeometry(0.4, 0.1, 30)
+  private sharedLineMat = new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 0.6 })
+  private sharedDizzyGeo = new THREE.OctahedronGeometry(0.15)
+  private sharedDizzyMat = new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.9 })
 
   constructor(
     private scene:        THREE.Scene,
@@ -226,9 +232,6 @@ export class Enemy2Manager {
       this.scene.remove(e.group)
       this.scene.remove(e.attackRing)
       this.removeAttackLine(e)
-      // attack ring dispose
-      e.attackRing.geometry.dispose()
-      ;(e.attackRing.material as THREE.Material).dispose()
       // cloned FBX mesh dispose
       e.group.traverse((child) => {
         const mesh = child as THREE.Mesh
@@ -288,9 +291,7 @@ export class Enemy2Manager {
       this.attackDirMap.set(enemy, new THREE.Vector3(dx / len, 0, dz / len))
     }
 
-    const geo  = new THREE.BoxGeometry(0.4, 0.1, lineLen)
-    const mat  = new THREE.MeshBasicMaterial({ color: 0xff4400, transparent: true, opacity: 0.6 })
-    const mesh = new THREE.Mesh(geo, mat)
+    const mesh = new THREE.Mesh(this.sharedLineGeo, this.sharedLineMat.clone())
     mesh.rotation.y = angle
     mesh.position.set(
       ex + Math.sin(angle) * lineLen * 0.5,
@@ -306,8 +307,7 @@ export class Enemy2Manager {
     const mesh = this.attackLineMeshes.get(enemy)
     if (mesh) {
       this.scene.remove(mesh)
-      mesh.geometry.dispose()
-      ;(mesh.material as THREE.Material).dispose()
+      ;(mesh.material as THREE.Material).dispose()  // 클론된 material만 dispose
       this.attackLineMeshes.delete(enemy)
     }
   }
@@ -420,10 +420,8 @@ export class Enemy2Manager {
 
         if (!enemy.dizzyGroup) {
           enemy.dizzyGroup = new THREE.Group()
-          const starGeo = new THREE.OctahedronGeometry(0.15)
-          const starMat = new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.9 })
           for (let si = 0; si < 4; si++) {
-            const star = new THREE.Mesh(starGeo, starMat.clone())
+            const star = new THREE.Mesh(this.sharedDizzyGeo, this.sharedDizzyMat)
             const ang = (si / 4) * Math.PI * 2
             star.position.set(Math.cos(ang) * 0.5, 0, Math.sin(ang) * 0.5)
             enemy.dizzyGroup.add(star)
@@ -437,10 +435,6 @@ export class Enemy2Manager {
           this.setMaterial(enemy.group, enemy.hitFlash > 0 ? 0xff4444 : null)
           if (enemy.dizzyGroup) {
             enemy.group.remove(enemy.dizzyGroup)
-            enemy.dizzyGroup.traverse(c => {
-              const m = c as THREE.Mesh
-              if (m.isMesh) { m.geometry?.dispose(); (m.material as THREE.Material)?.dispose() }
-            })
             enemy.dizzyGroup = null
           }
         }

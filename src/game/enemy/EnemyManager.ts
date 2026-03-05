@@ -27,6 +27,12 @@ export class EnemyManager {
   private attackClip:  THREE.AnimationClip | null = null
   private deathClip:   THREE.AnimationClip | null = null
 
+  // ── 공유 지오메트리/머터리얼 (GPU 업로드 1회) ─────────────────────────
+  private sharedRingGeo = new THREE.RingGeometry(ENEMY_ATTACK_RANGE - 0.15, ENEMY_ATTACK_RANGE + 0.1, 48)
+  private sharedRingMat = new THREE.MeshBasicMaterial({ color: 0xff2200, transparent: true, opacity: 0.55, side: THREE.DoubleSide })
+  private sharedDizzyGeo = new THREE.OctahedronGeometry(0.15)
+  private sharedDizzyMat = new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.9 })
+
   constructor(
     private scene:        THREE.Scene,
     private getCharacter: () => THREE.Group,
@@ -97,9 +103,7 @@ export class EnemyManager {
       deathAction.loop  = THREE.LoopOnce; deathAction.clampWhenFinished = true
       idleAction.play()
 
-      const ringGeo = new THREE.RingGeometry(ENEMY_ATTACK_RANGE - 0.15, ENEMY_ATTACK_RANGE + 0.1, 48)
-      const ringMat = new THREE.MeshBasicMaterial({ color: 0xff2200, transparent: true, opacity: 0.55, side: THREE.DoubleSide })
-      const ring    = new THREE.Mesh(ringGeo, ringMat)
+      const ring = new THREE.Mesh(this.sharedRingGeo, this.sharedRingMat)
       ring.rotation.x = -Math.PI / 2
       ring.position.set(sx, 0.05, sz)
       ring.visible = false
@@ -123,9 +127,7 @@ export class EnemyManager {
     for (const e of this.enemies) {
       this.scene.remove(e.group)
       this.scene.remove(e.attackRing)
-      // attack ring dispose
-      e.attackRing.geometry.dispose()
-      ;(e.attackRing.material as THREE.Material).dispose()
+      // 공유 geometry/material은 dispose 하지 않음
       // cloned FBX mesh dispose
       e.group.traverse((child) => {
         const mesh = child as THREE.Mesh
@@ -238,13 +240,11 @@ export class EnemyManager {
         enemy.stunTimer -= delta
         this.setEnemyMaterial(enemy.group, 0xffff00)
 
-        // 빙글빙글 별 생성
+        // 빙글빙글 별 생성 (공유 geometry/material)
         if (!enemy.dizzyGroup) {
           enemy.dizzyGroup = new THREE.Group()
-          const starGeo = new THREE.OctahedronGeometry(0.15)
-          const starMat = new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.9 })
           for (let si = 0; si < 4; si++) {
-            const star = new THREE.Mesh(starGeo, starMat.clone())
+            const star = new THREE.Mesh(this.sharedDizzyGeo, this.sharedDizzyMat)
             const ang = (si / 4) * Math.PI * 2
             star.position.set(Math.cos(ang) * 0.5, 0, Math.sin(ang) * 0.5)
             enemy.dizzyGroup.add(star)
@@ -258,10 +258,7 @@ export class EnemyManager {
           this.setEnemyMaterial(enemy.group, enemy.hitFlash > 0 ? 0xff4444 : null)
           if (enemy.dizzyGroup) {
             enemy.group.remove(enemy.dizzyGroup)
-            enemy.dizzyGroup.traverse(c => {
-              const m = c as THREE.Mesh
-              if (m.isMesh) { m.geometry?.dispose(); (m.material as THREE.Material)?.dispose() }
-            })
+            // 공유 geometry/material → dispose 불필요
             enemy.dizzyGroup = null
           }
         }

@@ -7,6 +7,7 @@ const LIGHT_POOL_SIZE = 16
 const SLASH_POOL_SIZE = 12
 const RING_POOL_SIZE  = 28
 const FLAME_POOL_SIZE = 16
+const SWING_POOL_SIZE = 6
 
 interface SparkEntry { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; inUse: boolean }
 
@@ -23,8 +24,11 @@ export class EffectSystem {
   // ── 파이어볼 꼬리 스파크 (라이트 풀 미사용) ──────────────────────────
   private trailSparks: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; vel: THREE.Vector3; age: number; dur: number }[] = []
 
-  // ── 무기 스윙 트레일 ───────────────────────────────────────────────
-  private swingTrails: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; age: number; dur: number }[] = []
+  // ── 무기 스윙 트레일 (풀) ───────────────────────────────────────────
+  private swingTrails: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; age: number; dur: number; poolIdx: number }[] = []
+  private swingPool: { mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; inUse: boolean }[] = []
+  private swingFree: number[] = []
+  private swingGeos: THREE.TorusGeometry[] = []
 
   private smallGeo       = new THREE.SphereGeometry(0.06, 4, 4)
   private slashArcGeo    = new THREE.TorusGeometry(1, 0.07, 6, 28, Math.PI * 0.75)
@@ -53,6 +57,7 @@ export class EffectSystem {
     this.initSparkPool()
     this.initLightPool()
     this.initMeshPools()
+    this.initSwingTrailPool()
     this.prewarmShaders()
   }
 
@@ -130,6 +135,27 @@ export class EffectSystem {
       this.scene.add(mesh)
       this.flamePool.push(mesh)
       this.freeFlames.push(i)
+    }
+  }
+
+  // ── 스윙 트레일 풀 (콤보 단계별 geometry 미리 생성) ─────────────────
+  private initSwingTrailPool() {
+    for (let step = 0; step < 3; step++) {
+      this.swingGeos.push(new THREE.TorusGeometry(
+        1.6 + step * 0.3, 0.12 - step * 0.01, 4, 24, Math.PI * 0.9,
+      ))
+    }
+    for (let i = 0; i < SWING_POOL_SIZE; i++) {
+      const mat = new THREE.MeshBasicMaterial({
+        transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false,
+      })
+      const mesh = new THREE.Mesh(this.swingGeos[0], mat)
+      mesh.visible = false
+      mesh.frustumCulled = false
+      mesh.position.y = -9999
+      this.scene.add(mesh)
+      this.swingPool.push({ mesh, mat, inUse: false })
+      this.swingFree.push(i)
     }
   }
 
@@ -411,21 +437,26 @@ export class EffectSystem {
     }
   }
 
-  /** 무기 스윙 트레일 (콤보 단계별 색상) */
+  /** 무기 스윙 트레일 (콤보 단계별 색상, 풀 사용) */
   spawnSwingTrail(pos: THREE.Vector3, dirY: number, comboStep: number) {
+    if (this.swingFree.length === 0) return
+    const idx = this.swingFree.pop()!
+    const entry = this.swingPool[idx]
+    entry.inUse = true
+
     const colors = [0x00ccff, 0x44aaff, 0xff8844]
     const color = colors[Math.min(comboStep, colors.length - 1)]
-    const arcGeo = new THREE.TorusGeometry(1.6 + comboStep * 0.3, 0.12 - comboStep * 0.01, 4, 24, Math.PI * 0.9)
-    const mat = new THREE.MeshBasicMaterial({
-      color, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false,
-    })
-    const mesh = new THREE.Mesh(arcGeo, mat)
-    mesh.frustumCulled = false
-    mesh.position.set(pos.x + Math.sin(dirY) * 1.2, 1.0 + comboStep * 0.15, pos.z + Math.cos(dirY) * 1.2)
-    mesh.rotation.set(Math.PI * 0.3 + comboStep * 0.1, dirY + (comboStep % 2 === 0 ? 0 : Math.PI * 0.15), 0)
-    mesh.scale.setScalar(0.8 + comboStep * 0.2)
-    this.scene.add(mesh)
-    this.swingTrails.push({ mesh, mat, age: 0, dur: 0.2 })
+    const geoIdx = Math.min(comboStep, this.swingGeos.length - 1)
+
+    entry.mesh.geometry = this.swingGeos[geoIdx]
+    entry.mat.color.setHex(color)
+    entry.mat.opacity = 0.85
+    entry.mesh.visible = true
+    entry.mesh.position.set(pos.x + Math.sin(dirY) * 1.2, 1.0 + comboStep * 0.15, pos.z + Math.cos(dirY) * 1.2)
+    entry.mesh.rotation.set(Math.PI * 0.3 + comboStep * 0.1, dirY + (comboStep % 2 === 0 ? 0 : Math.PI * 0.15), 0)
+    entry.mesh.scale.setScalar(0.8 + comboStep * 0.2)
+
+    this.swingTrails.push({ mesh: entry.mesh, mat: entry.mat, age: 0, dur: 0.2, poolIdx: idx })
   }
 
   spawnFireCone(ox: number, oz: number, dirY: number) {
@@ -514,29 +545,64 @@ export class EffectSystem {
     }
   }
 
-  // ── 성스러운 빔 ────────────────────────────────────────────────────
-  spawnHolyBeam(x: number, z: number, dirY: number, length: number) {
+  // ── D스킬: 검에서 빛 뿜는 슬래시 빔 ─────────────────────────────────
+  spawnSwordBeamSlash(x: number, z: number, dirY: number, length: number) {
     const fwdX = Math.sin(dirY), fwdZ = Math.cos(dirY)
-    const flash = this.acquireLight(0xffdd44, 20, 20, x + fwdX * length * 0.5, 2, z + fwdZ * length * 0.5)
-    if (flash) this.elecFxList.push({ light: flash, age: 0, sparks: [] })
 
-    const colors = [0xffdd44, 0xffffff, 0xffcc00]
-    for (let d = 0; d < length; d += 1.5) {
+    // 강렬한 광원 2개 (시작점 + 끝점)
+    const flash1 = this.acquireLight(0xffdd44, 28, 20, x + fwdX * 2, 2, z + fwdZ * 2)
+    const flash2 = this.acquireLight(0xffffff, 18, 18, x + fwdX * length * 0.6, 1.5, z + fwdZ * length * 0.6)
+    if (flash1) this.elecFxList.push({ light: flash1, age: 0, sparks: [] })
+    if (flash2) this.elecFxList.push({ light: flash2, age: 0, sparks: [] })
+
+    // 3겹 슬래시 아크 (검에서 뿜어나가는 느낌)
+    const slashColors = [0xffdd44, 0xffffff, 0xffaa00]
+    for (let s = 0; s < 3; s++) {
+      const offset = s * 0.12
+      const dist = 1.5 + s * 1.8
+      const mesh = this.acquireSlash(slashColors[s])
+      if (!mesh) continue
+      mesh.position.set(x + fwdX * dist, 1.0 + s * 0.15, z + fwdZ * dist)
+      mesh.rotation.set(Math.PI * 0.3 + s * 0.08, dirY + (s - 1) * 0.15, offset)
+      mesh.scale.setScalar(1.5 + s * 0.5)
+      this.slashFxList.push({ mesh, age: 0, dur: 0.25 + s * 0.05, startS: 1.5 + s * 0.5 })
+    }
+
+    // 빔 경로를 따라 촤좌작! 에너지 파티클 (밀도 높게)
+    const sparkColors = [0xffdd44, 0xffffff, 0xffee88, 0xffcc00]
+    for (let d = 0; d < length; d += 0.8) {
       const bx = x + fwdX * d, bz = z + fwdZ * d
-      for (let i = 0; i < 4; i++) {
-        const col  = colors[Math.floor(Math.random() * colors.length)]
-        const mesh = this.acquireSpark(col, bx + (Math.random() - 0.5) * 0.5, 0.3 + Math.random() * 2, bz + (Math.random() - 0.5) * 0.5)
+      for (let i = 0; i < 6; i++) {
+        const col  = sparkColors[Math.floor(Math.random() * sparkColors.length)]
+        // 좌우로 퍼지는 스파크
+        const perpX = -fwdZ, perpZ = fwdX
+        const spread = (Math.random() - 0.5) * 2.5
+        const mesh = this.acquireSpark(col,
+          bx + perpX * spread, 0.3 + Math.random() * 2.0,
+          bz + perpZ * spread,
+        )
         if (!mesh) continue
         const mat = this.sparkPool[mesh.userData.poolIndex as number].mat
+        // 바깥+위로 퍼지는 속도
         this.trailSparks.push({
           mesh, mat,
-          vel: new THREE.Vector3((Math.random() - 0.5) * 2, 2 + Math.random() * 3, (Math.random() - 0.5) * 2),
-          age: 0, dur: 0.3,
+          vel: new THREE.Vector3(
+            perpX * spread * 3 + fwdX * 2,
+            2 + Math.random() * 4,
+            perpZ * spread * 3 + fwdZ * 2,
+          ),
+          age: 0, dur: 0.25 + Math.random() * 0.15,
         })
       }
     }
-    this.spawnRing(x + fwdX * length * 0.5, z + fwdZ * length * 0.5, 0xffdd44, 3.0, 0.4)
-    this.screenShakeTimer = Math.max(this.screenShakeTimer, 0.3)
+
+    // 빔 끝 충격파 링
+    this.spawnRing(x + fwdX * length * 0.5, z + fwdZ * length * 0.5, 0xffdd44, 4.0, 0.35)
+    this.spawnRing(x + fwdX * length * 0.7, z + fwdZ * length * 0.7, 0xffffff, 2.5, 0.25)
+    // 시작점 링 (검에서 방출)
+    this.spawnRing(x + fwdX * 1.5, z + fwdZ * 1.5, 0xffaa00, 2.0, 0.2)
+
+    this.screenShakeTimer = Math.max(this.screenShakeTimer, 0.35)
   }
 
   // ── 공중 폭격 착탄 ─────────────────────────────────────────────────
@@ -661,16 +727,17 @@ export class EffectSystem {
       if (p >= 1) { this.releaseFlame(fx.mesh); this.flameFxList.splice(i, 1) }
     }
 
-    // 스윙 트레일
+    // 스윙 트레일 (풀 반환)
     for (let i = this.swingTrails.length - 1; i >= 0; i--) {
       const st = this.swingTrails[i]; st.age += delta
       const p = st.age / st.dur
       st.mat.opacity = 0.85 * Math.max(0, 1 - p)
       st.mesh.scale.multiplyScalar(1 + delta * 3)
       if (p >= 1) {
-        this.scene.remove(st.mesh)
-        st.mesh.geometry.dispose()
-        st.mat.dispose()
+        st.mesh.visible = false
+        st.mesh.position.y = -9999
+        this.swingPool[st.poolIdx].inUse = false
+        this.swingFree.push(st.poolIdx)
         this.swingTrails.splice(i, 1)
       }
     }

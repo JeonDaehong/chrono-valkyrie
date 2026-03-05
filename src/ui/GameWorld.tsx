@@ -311,8 +311,68 @@ export function GameWorld({ onExit }: GameWorldProps) {
     ]).then(() => {
       if (!isMounted) return
       enemy2Manager.initFireballPool()
+
+      // ── 종합 셰이더 프리웜: 모든 material 변종 + geometry 타입 GPU 업로드 ──
+      const prewarmDummies: THREE.Object3D[] = []
+      const prewarmGeos: THREE.BufferGeometry[] = []
+
+      // 게임에서 사용되는 모든 MeshBasicMaterial 변종
+      const matConfigs: THREE.MeshBasicMaterialParameters[] = [
+        { transparent: true, opacity: 0 },                                                  // FrontSide (스파크 등)
+        { transparent: true, opacity: 0, side: THREE.DoubleSide },                           // 공격 링, 범위 표시
+        { transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false },         // 슬래시, 불꽃
+        { transparent: true, opacity: 0, side: THREE.BackSide, depthWrite: false },           // 보이드 외구
+        { transparent: true, opacity: 0, wireframe: true, depthWrite: false },                // 보이드 내구
+      ]
+
+      // 게임에서 사용되는 모든 geometry 타입
+      const geos: THREE.BufferGeometry[] = [
+        new THREE.TorusGeometry(1.6, 0.12, 4, 24, Math.PI * 0.9),  // 스윙 트레일
+        new THREE.RingGeometry(1, 2, 40),                           // 범위 링
+        new THREE.BoxGeometry(2, 0.06, 10),                         // 경고 메시
+        new THREE.SphereGeometry(0.3, 8, 8),                        // 미사일/수류탄
+        new THREE.CircleGeometry(1.2, 32),                          // 쉴드
+        new THREE.CylinderGeometry(1, 1, 3.5, 24, 1, true),        // 포탈 빔
+        new THREE.OctahedronGeometry(0.15),                         // 기절 별
+        new THREE.PlaneGeometry(2, 8),                              // 지면 상흔
+        new THREE.TorusGeometry(2.5 * 1.2, 0.15, 6, 24, Math.PI * 0.6), // S스킬 초승달 검기
+        new THREE.TorusGeometry(1.2, 0.12, 16, 48),                 // 포탈 토러스
+        new THREE.SphereGeometry(1, 32, 32),                        // 보이드 외구
+        new THREE.SphereGeometry(1, 16, 16),                        // 보이드 내구
+        new THREE.SphereGeometry(0.06, 4, 4),                       // 소형 스파크
+        new THREE.SphereGeometry(0.08, 6, 6),                       // 포탈 파티클
+      ]
+      prewarmGeos.push(...geos)
+
+      // 모든 geometry × material 변종 조합으로 더미 메시 생성 → GPU 업로드 강제
+      for (const geo of geos) {
+        for (const cfg of matConfigs) {
+          const mat = new THREE.MeshBasicMaterial(cfg)
+          const mesh = new THREE.Mesh(geo, mat)
+          mesh.frustumCulled = false
+          mesh.position.set(0, -9999, 0)
+          world.scene.add(mesh)
+          prewarmDummies.push(mesh)
+        }
+      }
+
+      // PointLight 프리웜 (이미 EffectSystem에 있지만 안전하게)
+      const warmLight = new THREE.PointLight(0xffffff, 0, 1)
+      warmLight.position.set(0, -9999, 0)
+      world.scene.add(warmLight)
+      prewarmDummies.push(warmLight)
+
+      // 컴파일 + 워밍업 렌더
       world.renderer.compile(world.scene, world.camera)
-      world.renderer.render(world.scene, world.camera)  // 워밍업 렌더
+      world.renderer.render(world.scene, world.camera)
+
+      // 더미 정리
+      for (const d of prewarmDummies) {
+        world.scene.remove(d)
+        if (d instanceof THREE.Mesh) (d.material as THREE.Material).dispose()
+      }
+      for (const geo of prewarmGeos) geo.dispose()
+
       animate()
     })
 

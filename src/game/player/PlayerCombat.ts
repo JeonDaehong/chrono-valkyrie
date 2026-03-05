@@ -80,6 +80,9 @@ export class PlayerCombat {
   // rFirePending 제거 — 즉시 발사
   private missiles: MissileInstance[] = []
   private missileGeo: THREE.SphereGeometry | null = null
+  // 미사일 라이트 풀 (scene에 미리 추가, intensity=0 으로 비활성)
+  private missileLightPool: THREE.PointLight[] = []
+  private freeMissileLights: number[] = []
 
   // ── A 수류탄 스킬 ─────────────────────────────────────────────────
   aIsAttacking   = false
@@ -106,10 +109,13 @@ export class PlayerCombat {
   dCooldown      = 0
   private dFirePending = false
   private groundScars: Array<{
-    mesh: THREE.Mesh; light: THREE.PointLight
+    mesh: THREE.Mesh; lightIdx: number
     originX: number; originZ: number; dirX: number; dirZ: number; length: number
     age: number; dotTimer: number
   }> = []
+  // 상흔 라이트 풀
+  private scarLightPool: THREE.PointLight[] = []
+  private freeScarLights: number[] = []
 
   // ── F 공중 폭격 스킬 ────────────────────────────────────────────
   fIsAttacking   = false
@@ -139,6 +145,21 @@ export class PlayerCombat {
   private tBuffer = 0
   private attackBuffer = 0
 
+  // ── 공유 지오메트리/머터리얼 (GPU 업로드 1회) ──────────────────────────
+  private sharedMissileMat: THREE.MeshBasicMaterial
+  private sharedGrenadeGeo: THREE.SphereGeometry
+  private sharedGrenadeMat: THREE.MeshBasicMaterial
+  private sharedShieldGeo: THREE.CircleGeometry
+  private sharedShieldMat: THREE.MeshBasicMaterial
+  private sharedBladeGeo: THREE.BufferGeometry
+  private sharedBladeMat: THREE.MeshBasicMaterial
+  private sharedScarGeo: THREE.PlaneGeometry
+  private sharedScarMat: THREE.MeshBasicMaterial
+  private sharedVoidOuterGeo: THREE.SphereGeometry
+  private sharedVoidOuterMat: THREE.MeshBasicMaterial
+  private sharedVoidInnerGeo: THREE.SphereGeometry
+  private sharedVoidInnerMat: THREE.MeshBasicMaterial
+
   constructor(
     private playerAnim:    PlayerAnimation,
     private controller:    PlayerController,
@@ -151,6 +172,37 @@ export class PlayerCombat {
     private bossManager:   BossManager | null = null,
   ) {
     this.missileGeo = new THREE.SphereGeometry(0.3, 8, 8)
+    this.sharedMissileMat = new THREE.MeshBasicMaterial({ color: 0x00ccff, transparent: true, opacity: 0.9 })
+    this.sharedGrenadeGeo = new THREE.SphereGeometry(0.25, 8, 8)
+    this.sharedGrenadeMat = new THREE.MeshBasicMaterial({ color: 0xff8800, transparent: true, opacity: 0.9 })
+    this.sharedShieldGeo = new THREE.CircleGeometry(1.2, 32)
+    this.sharedShieldMat = new THREE.MeshBasicMaterial({ color: 0x4488ff, transparent: true, opacity: 0.6, side: THREE.DoubleSide })
+    // 초승달 형태 검기 (TorusGeometry 호 + 2배 크기)
+    this.sharedBladeGeo = new THREE.TorusGeometry(S_WIDTH * 1.2, 0.15, 6, 24, Math.PI * 0.6)
+    this.sharedBladeMat = new THREE.MeshBasicMaterial({ color: 0x00ffee, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false })
+    this.sharedScarGeo = new THREE.PlaneGeometry(D_WIDTH * 0.8, D_RANGE)
+    this.sharedScarMat = new THREE.MeshBasicMaterial({ color: 0xffdd44, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false })
+    this.sharedVoidOuterGeo = new THREE.SphereGeometry(1, 32, 32)
+    this.sharedVoidOuterMat = new THREE.MeshBasicMaterial({ color: 0x220044, transparent: true, opacity: 0.3, side: THREE.BackSide, depthWrite: false })
+    this.sharedVoidInnerGeo = new THREE.SphereGeometry(1, 16, 16)
+    this.sharedVoidInnerMat = new THREE.MeshBasicMaterial({ color: 0x8800ff, transparent: true, opacity: 0.5, wireframe: true, depthWrite: false })
+
+    // 미사일 라이트 풀 (최대 3발 동시)
+    for (let i = 0; i < 3; i++) {
+      const l = new THREE.PointLight(0x00ccff, 0, 8)
+      l.position.set(0, -9999, 0)
+      this.scene.add(l)
+      this.missileLightPool.push(l)
+      this.freeMissileLights.push(i)
+    }
+    // 상흔 라이트 풀 (최대 4개 동시)
+    for (let i = 0; i < 4; i++) {
+      const l = new THREE.PointLight(0xffdd44, 0, 14)
+      l.position.set(0, -9999, 0)
+      this.scene.add(l)
+      this.scarLightPool.push(l)
+      this.freeScarLights.push(i)
+    }
   }
 
   // ── 기본 공격 (3-hit 콤보) ─────────────────────────────────────────
@@ -370,7 +422,7 @@ export class PlayerCombat {
       const bx = Math.sin(a)
       const bz = Math.cos(a)
 
-      const mat = new THREE.MeshBasicMaterial({ color: 0x00ccff, transparent: true, opacity: 0.9 })
+      const mat = this.sharedMissileMat.clone()
       const mesh = new THREE.Mesh(this.missileGeo!, mat)
       mesh.frustumCulled = false
       mesh.position.set(
@@ -380,9 +432,18 @@ export class PlayerCombat {
       )
       this.scene.add(mesh)
 
-      const light = new THREE.PointLight(0x00ccff, 4, 8)
+      // 풀에서 라이트 획득
+      let light: THREE.PointLight
+      if (this.freeMissileLights.length > 0) {
+        const li = this.freeMissileLights.pop()!
+        light = this.missileLightPool[li]
+        light.color.setHex(0x00ccff)
+        light.intensity = 4
+      } else {
+        light = new THREE.PointLight(0x00ccff, 4, 8)
+        this.scene.add(light)
+      }
       light.position.copy(mesh.position)
-      this.scene.add(light)
 
       // 좌우 방향 (baseDir에 수직)
       const lateral = new THREE.Vector3(-bz, 0, bx)
@@ -410,12 +471,9 @@ export class PlayerCombat {
     const fwdX = Math.sin(char.rotation.y)
     const fwdZ = Math.cos(char.rotation.y)
 
-    // 파란 성스러운 쉴드 — 캐릭터 전방에 수직 배치
-    const geo = new THREE.CircleGeometry(1.2, 32)
-    const mat = new THREE.MeshBasicMaterial({
-      color: 0x4488ff, transparent: true, opacity: 0.6, side: THREE.DoubleSide,
-    })
-    this.shieldMesh = new THREE.Mesh(geo, mat)
+    // 파란 성스러운 쉴드 — 캐릭터 전방에 수직 배치 (공유 geometry/material)
+    const mat = this.sharedShieldMat.clone()
+    this.shieldMesh = new THREE.Mesh(this.sharedShieldGeo, mat)
     this.shieldMesh.frustumCulled = false
     this.shieldMesh.position.set(
       char.position.x + fwdX * 1.5,
@@ -886,8 +944,16 @@ export class PlayerCombat {
         // 정리
         this.scene.remove(m.mesh)
         ;(m.mesh.material as THREE.Material).dispose()
-        this.scene.remove(m.light)
-        m.light.dispose()
+        // 라이트 풀 반환
+        const mli = this.missileLightPool.indexOf(m.light)
+        if (mli >= 0) {
+          m.light.intensity = 0
+          m.light.position.set(0, -9999, 0)
+          this.freeMissileLights.push(mli)
+        } else {
+          this.scene.remove(m.light)
+          m.light.dispose()
+        }
         this.missiles.splice(i, 1)
       }
     }
@@ -1017,9 +1083,8 @@ export class PlayerCombat {
         targetPos.set(char.position.x + dx * ratio, 0, char.position.z + dz * ratio)
       }
 
-      const geo = new THREE.SphereGeometry(0.25, 8, 8)
-      const mat = new THREE.MeshBasicMaterial({ color: 0xff8800, transparent: true, opacity: 0.9 })
-      const mesh = new THREE.Mesh(geo, mat)
+      const mat = this.sharedGrenadeMat.clone()
+      const mesh = new THREE.Mesh(this.sharedGrenadeGeo, mat)
       mesh.frustumCulled = false
       mesh.position.copy(startPos)
       this.scene.add(mesh)
@@ -1076,8 +1141,9 @@ export class PlayerCombat {
       b.light.position.copy(b.mesh.position)
       b.traveled += move
 
-      // 약간 크기 증가
-      b.mesh.scale.x *= 1 + delta * 0.5
+      // 회전하면서 크기 약간 증가 (초승달 회전감)
+      b.mesh.rotation.z += delta * 4
+      b.mesh.scale.multiplyScalar(1 + delta * 0.3)
       // 트레일
       this.fx.spawnBladeTrail(b.mesh.position.x, 1.0, b.mesh.position.z)
 
@@ -1087,7 +1153,7 @@ export class PlayerCombat {
           if (enemy.isDead || b.hitEnemies.has(enemy)) continue
           const dx = enemy.group.position.x - b.mesh.position.x
           const dz = enemy.group.position.z - b.mesh.position.z
-          if (dx * dx + dz * dz <= (S_WIDTH * 0.7) * (S_WIDTH * 0.7)) {
+          if (dx * dx + dz * dz <= (S_WIDTH * 1.4) * (S_WIDTH * 1.4)) {
             src.damageEnemy(enemy, S_DMG)
             b.hitEnemies.add(enemy)
             this.playerAnim.triggerHitStop(HITSTOP_S)
@@ -1098,7 +1164,7 @@ export class PlayerCombat {
         const bpos = this.bossManager.bossPosition
         if (bpos && !b.hitEnemies.has(this.bossManager)) {
           const dx = bpos.x - b.mesh.position.x, dz = bpos.z - b.mesh.position.z
-          if (dx * dx + dz * dz <= (S_WIDTH * 0.7) * (S_WIDTH * 0.7)) {
+          if (dx * dx + dz * dz <= (S_WIDTH * 1.4) * (S_WIDTH * 1.4)) {
             this.bossManager.takeDamage(S_DMG)
             b.hitEnemies.add(this.bossManager)
             this.playerAnim.triggerHitStop(HITSTOP_S)
@@ -1107,7 +1173,7 @@ export class PlayerCombat {
       }
 
       if (b.traveled >= S_RANGE) {
-        this.scene.remove(b.mesh); b.mesh.geometry.dispose(); (b.mesh.material as THREE.Material).dispose()
+        this.scene.remove(b.mesh); (b.mesh.material as THREE.Material).dispose()
         this.scene.remove(b.light); b.light.dispose()
         this.energyBlade = null
       }
@@ -1129,14 +1195,13 @@ export class PlayerCombat {
       const dirY = char.rotation.y
       const fwdX = Math.sin(dirY), fwdZ = Math.cos(dirY)
 
-      const geo = new THREE.BoxGeometry(S_WIDTH, 0.15, 0.5)
-      const mat = new THREE.MeshBasicMaterial({
-        color: 0x00ffee, transparent: true, opacity: 0.85, side: THREE.DoubleSide,
-      })
-      const mesh = new THREE.Mesh(geo, mat)
+      const mat = this.sharedBladeMat.clone()
+      const mesh = new THREE.Mesh(this.sharedBladeGeo, mat)
       mesh.frustumCulled = false
       mesh.position.set(char.position.x + fwdX * 2, 1.0, char.position.z + fwdZ * 2)
-      mesh.rotation.y = dirY
+      // 초승달 방향: 진행 방향을 향하도록 회전
+      mesh.rotation.set(Math.PI * 0.5, dirY, 0)
+      mesh.scale.setScalar(2.0)
       this.scene.add(mesh)
 
       const light = new THREE.PointLight(0x00ffee, 5, 10)
@@ -1227,11 +1292,18 @@ export class PlayerCombat {
       const mat = scar.mesh.material as THREE.MeshBasicMaterial
       const fade = 1 - scar.age / D_DOT_DUR
       mat.opacity = 0.4 * fade * (0.7 + 0.3 * Math.sin(scar.age * 8))
-      scar.light.intensity = 3 * fade
+      if (scar.lightIdx >= 0) {
+        this.scarLightPool[scar.lightIdx].intensity = 3 * fade
+      }
 
       if (scar.age >= D_DOT_DUR) {
-        this.scene.remove(scar.mesh); scar.mesh.geometry.dispose(); mat.dispose()
-        this.scene.remove(scar.light); scar.light.dispose()
+        this.scene.remove(scar.mesh); mat.dispose()
+        // 라이트 풀 반환
+        if (scar.lightIdx >= 0) {
+          this.scarLightPool[scar.lightIdx].intensity = 0
+          this.scarLightPool[scar.lightIdx].position.set(0, -9999, 0)
+          this.freeScarLights.push(scar.lightIdx)
+        }
         this.groundScars.splice(i, 1)
       }
     }
@@ -1255,7 +1327,7 @@ export class PlayerCombat {
       const ox = char.position.x, oz = char.position.z
 
       // 빔 이펙트
-      this.fx.spawnHolyBeam(ox, oz, dirY, D_RANGE)
+      this.fx.spawnSwordBeamSlash(ox, oz, dirY, D_RANGE)
       this.audio.playSound(bangUrl, 0.85, 0.1)
       this.playerAnim.triggerHitStop(HITSTOP_D)
       this.hud.triggerScreenFlash('#ffdd44', 0.06)
@@ -1290,23 +1362,31 @@ export class PlayerCombat {
       }
 
       // 지면 상흔 생성
-      const scarGeo = new THREE.PlaneGeometry(D_WIDTH * 0.8, D_RANGE)
-      const scarMat = new THREE.MeshBasicMaterial({
-        color: 0xffdd44, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false,
-      })
-      const scarMesh = new THREE.Mesh(scarGeo, scarMat)
+      const scarMat = this.sharedScarMat.clone()
+      const scarMesh = new THREE.Mesh(this.sharedScarGeo, scarMat)
       scarMesh.frustumCulled = false
       scarMesh.rotation.x = -Math.PI / 2
       scarMesh.rotation.z = -dirY
       scarMesh.position.set(ox + fwdX * D_RANGE * 0.5, 0.05, oz + fwdZ * D_RANGE * 0.5)
       this.scene.add(scarMesh)
 
-      const scarLight = new THREE.PointLight(0xffdd44, 3, D_RANGE)
+      // 풀에서 라이트 획득
+      let scarLightIdx = -1
+      let scarLight: THREE.PointLight
+      if (this.freeScarLights.length > 0) {
+        scarLightIdx = this.freeScarLights.pop()!
+        scarLight = this.scarLightPool[scarLightIdx]
+        scarLight.color.setHex(0xffdd44)
+        scarLight.intensity = 3
+        scarLight.distance = D_RANGE
+      } else {
+        scarLight = new THREE.PointLight(0xffdd44, 3, D_RANGE)
+        this.scene.add(scarLight)
+      }
       scarLight.position.set(ox + fwdX * D_RANGE * 0.5, 1, oz + fwdZ * D_RANGE * 0.5)
-      this.scene.add(scarLight)
 
       this.groundScars.push({
-        mesh: scarMesh, light: scarLight,
+        mesh: scarMesh, lightIdx: scarLightIdx,
         originX: ox, originZ: oz, dirX: fwdX, dirZ: fwdZ, length: D_RANGE,
         age: 0, dotTimer: 0,
       })
@@ -1571,21 +1651,13 @@ export class PlayerCombat {
       const char = this.controller.character
       const cx = char.position.x, cz = char.position.z
 
-      const outerGeo = new THREE.SphereGeometry(1, 32, 32)
-      const outerMat = new THREE.MeshBasicMaterial({
-        color: 0x220044, transparent: true, opacity: 0.3, side: THREE.BackSide, depthWrite: false,
-      })
-      const outerSphere = new THREE.Mesh(outerGeo, outerMat)
+      const outerSphere = new THREE.Mesh(this.sharedVoidOuterGeo, this.sharedVoidOuterMat.clone())
       outerSphere.frustumCulled = false
       outerSphere.position.set(cx, 2, cz)
       outerSphere.scale.setScalar(0.1)
       this.scene.add(outerSphere)
 
-      const innerGeo = new THREE.SphereGeometry(1, 16, 16)
-      const innerMat = new THREE.MeshBasicMaterial({
-        color: 0x8800ff, transparent: true, opacity: 0.5, wireframe: true, depthWrite: false,
-      })
-      const innerSphere = new THREE.Mesh(innerGeo, innerMat)
+      const innerSphere = new THREE.Mesh(this.sharedVoidInnerGeo, this.sharedVoidInnerMat.clone())
       innerSphere.frustumCulled = false
       innerSphere.position.set(cx, 2, cz)
       innerSphere.scale.setScalar(0.1)
@@ -1630,13 +1702,17 @@ export class PlayerCombat {
       this.grenade = null
     }
     if (this.energyBlade) {
-      this.scene.remove(this.energyBlade.mesh); this.energyBlade.mesh.geometry.dispose(); (this.energyBlade.mesh.material as THREE.Material).dispose()
+      this.scene.remove(this.energyBlade.mesh); (this.energyBlade.mesh.material as THREE.Material).dispose()
       this.scene.remove(this.energyBlade.light); this.energyBlade.light.dispose()
       this.energyBlade = null
     }
     for (const scar of this.groundScars) {
-      this.scene.remove(scar.mesh); scar.mesh.geometry.dispose(); (scar.mesh.material as THREE.Material).dispose()
-      this.scene.remove(scar.light); scar.light.dispose()
+      this.scene.remove(scar.mesh); (scar.mesh.material as THREE.Material).dispose()
+      if (scar.lightIdx >= 0) {
+        this.scarLightPool[scar.lightIdx].intensity = 0
+        this.scarLightPool[scar.lightIdx].position.set(0, -9999, 0)
+        this.freeScarLights.push(scar.lightIdx)
+      }
     }
     this.groundScars = []
     this.fPendingStrikes = []
@@ -1653,8 +1729,15 @@ export class PlayerCombat {
     for (const m of this.missiles) {
       this.scene.remove(m.mesh)
       ;(m.mesh.material as THREE.Material).dispose()
-      this.scene.remove(m.light)
-      m.light.dispose()
+      const mli = this.missileLightPool.indexOf(m.light)
+      if (mli >= 0) {
+        m.light.intensity = 0
+        m.light.position.set(0, -9999, 0)
+        this.freeMissileLights.push(mli)
+      } else {
+        this.scene.remove(m.light)
+        m.light.dispose()
+      }
     }
     this.missiles = []
   }

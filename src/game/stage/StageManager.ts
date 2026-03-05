@@ -209,7 +209,8 @@ export class StageManager {
     this.clearStage()
     this.resetPlayerHP()
     this.loadStage(nextStage)
-    // 워밍업 렌더 (fadeOverlay가 화면을 가리는 동안)
+    // 워밍업 컴파일 + 렌더 (fadeOverlay가 화면을 가리는 동안 셰이더 컴파일/GPU 업로드)
+    this.world.renderer.compile(this.scene, this.world.camera)
     this.world.renderer.render(this.scene, this.world.camera)
     this.loadingText.style.opacity = '0'
     await this.fadeIn()

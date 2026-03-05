@@ -4,6 +4,11 @@ const PORTAL_COLOR = 0x00ffcc
 const PORTAL_RADIUS = 1.2
 const COLLISION_DIST = 2.0
 
+// ── 공유 지오메트리 (GPU 업로드 1회) ─────────────────────────────────────
+const sharedTorusGeo    = new THREE.TorusGeometry(PORTAL_RADIUS, 0.12, 16, 48)
+const sharedBeamGeo     = new THREE.CylinderGeometry(PORTAL_RADIUS * 0.8, PORTAL_RADIUS * 0.8, 3.5, 24, 1, true)
+const sharedParticleGeo = new THREE.SphereGeometry(0.08, 6, 6)
+
 export class Portal {
   group = new THREE.Group()
   active = false
@@ -17,20 +22,18 @@ export class Portal {
     private scene: THREE.Scene,
     x: number, z: number,
   ) {
-    // 링 (Torus)
-    const torusGeo = new THREE.TorusGeometry(PORTAL_RADIUS, 0.12, 16, 48)
+    // 링 (Torus) — 공유 geometry
     const torusMat = new THREE.MeshBasicMaterial({ color: PORTAL_COLOR, transparent: true, opacity: 0.9 })
-    this.torus = new THREE.Mesh(torusGeo, torusMat)
+    this.torus = new THREE.Mesh(sharedTorusGeo, torusMat)
     this.torus.rotation.x = Math.PI / 2  // 수평 → 수직
     this.group.add(this.torus)
 
-    // 빔 (반투명 실린더)
-    const beamGeo = new THREE.CylinderGeometry(PORTAL_RADIUS * 0.8, PORTAL_RADIUS * 0.8, 3.5, 24, 1, true)
+    // 빔 (반투명 실린더) — 공유 geometry
     const beamMat = new THREE.MeshBasicMaterial({
       color: PORTAL_COLOR, transparent: true, opacity: 0.15,
       side: THREE.DoubleSide,
     })
-    this.beam = new THREE.Mesh(beamGeo, beamMat)
+    this.beam = new THREE.Mesh(sharedBeamGeo, beamMat)
     this.beam.position.y = 1.75
     this.group.add(this.beam)
 
@@ -39,10 +42,10 @@ export class Portal {
     this.light.position.y = 1.5
     this.group.add(this.light)
 
-    // 떠다니는 파티클 구체 (6개)
+    // 떠다니는 파티클 구체 (6개) — 공유 geometry
     const particleMat = new THREE.MeshBasicMaterial({ color: PORTAL_COLOR, transparent: true, opacity: 0.7 })
     for (let i = 0; i < 6; i++) {
-      const p = new THREE.Mesh(new THREE.SphereGeometry(0.08, 6, 6), particleMat)
+      const p = new THREE.Mesh(sharedParticleGeo, particleMat)
       const angle = (i / 6) * Math.PI * 2
       p.position.set(Math.cos(angle) * PORTAL_RADIUS * 0.6, 0.5 + i * 0.4, Math.sin(angle) * PORTAL_RADIUS * 0.6)
       this.group.add(p)
@@ -95,12 +98,7 @@ export class Portal {
     this.scene.remove(this.group)
     this.active = false
 
-    // geometry dispose
-    this.torus.geometry.dispose()
-    this.beam.geometry.dispose()
-    for (const p of this.particles) p.geometry.dispose()
-
-    // material dispose
+    // 공유 geometry는 dispose 하지 않음 — material만 dispose
     ;(this.torus.material as THREE.Material).dispose()
     ;(this.beam.material as THREE.Material).dispose()
     if (this.particles.length > 0)

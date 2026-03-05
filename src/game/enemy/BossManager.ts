@@ -215,6 +215,15 @@ export class BossManager {
 
   private meteorRingGeo = new THREE.RingGeometry(BOSS_METEOR_RADIUS - 0.15, BOSS_METEOR_RADIUS, 40)
 
+  // ── 공유 머터리얼/지오메트리 (GPU 업로드 1회) ──────────────────────────
+  private sharedRingMat = new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true, opacity: 0.5, side: THREE.DoubleSide })
+  private sharedWarnMat = new THREE.MeshBasicMaterial({ color: 0xff3300, transparent: true, opacity: 0.5 })
+  private sharedMeteorMat = new THREE.MeshBasicMaterial({ color: 0xff2200, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
+
+  // 경고 박스 지오메트리 (charge/grab 공유)
+  private chargeWarnGeo = new THREE.BoxGeometry(BOSS_MELEE_RANGE * 2, 0.06, 46)
+  private grabWarnGeo = new THREE.BoxGeometry(BOSS_MELEE_RANGE * 1.2, 0.06, 12)
+
   constructor(
     private scene:        THREE.Scene,
     private getCharacter: () => THREE.Group,
@@ -489,7 +498,9 @@ export class BossManager {
   // ── 범위 표시 헬퍼 ──────────────────────────────────────────────────
   private createRangeRing(innerR: number, outerR: number, color: number, opacity: number): THREE.Mesh {
     const geo = new THREE.RingGeometry(innerR, outerR, 40)
-    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity, side: THREE.DoubleSide })
+    const mat = this.sharedRingMat.clone()
+    mat.color.setHex(color)
+    mat.opacity = opacity
     const mesh = new THREE.Mesh(geo, mat)
     mesh.rotation.x = -Math.PI / 2
     mesh.frustumCulled = false
@@ -582,9 +593,10 @@ export class BossManager {
         b.chargeDir.set(len > 0 ? dx / len : 0, 0, len > 0 ? dz / len : 1)
         b.chargeDistLeft = 60
         const WARN_LEN = 46
-        const warnGeo  = new THREE.BoxGeometry(BOSS_MELEE_RANGE * 2, 0.06, WARN_LEN)
-        const warnMat  = new THREE.MeshBasicMaterial({ color: 0xff3300, transparent: true, opacity: 0.5 })
-        const warnMesh = new THREE.Mesh(warnGeo, warnMat)
+        const warnMat  = this.sharedWarnMat.clone()
+        warnMat.color.setHex(0xff3300)
+        warnMat.opacity = 0.5
+        const warnMesh = new THREE.Mesh(this.chargeWarnGeo, warnMat)
         warnMesh.rotation.y = Math.atan2(b.chargeDir.x, b.chargeDir.z)
         warnMesh.position.set(
           b.group.position.x + b.chargeDir.x * WARN_LEN * 0.5,
@@ -683,9 +695,10 @@ export class BossManager {
         const len = Math.sqrt(dx * dx + dz * dz)
         b.chargeDir.set(len > 0 ? dx / len : 0, 0, len > 0 ? dz / len : 1)
         const WARN_LEN = 12
-        const warnGeo  = new THREE.BoxGeometry(BOSS_MELEE_RANGE * 1.2, 0.06, WARN_LEN)
-        const warnMat  = new THREE.MeshBasicMaterial({ color: 0xff0066, transparent: true, opacity: 0.45 })
-        const warnMesh = new THREE.Mesh(warnGeo, warnMat)
+        const warnMat  = this.sharedWarnMat.clone()
+        warnMat.color.setHex(0xff0066)
+        warnMat.opacity = 0.45
+        const warnMesh = new THREE.Mesh(this.grabWarnGeo, warnMat)
         warnMesh.rotation.y = Math.atan2(b.chargeDir.x, b.chargeDir.z)
         warnMesh.position.set(
           b.group.position.x + b.chargeDir.x * WARN_LEN * 0.5,
@@ -1483,7 +1496,7 @@ export class BossManager {
   // ══════════════════════════════════════════════════════════════════════
 
   private spawnSingleMeteor(wx: number, wz: number) {
-    const mat  = new THREE.MeshBasicMaterial({ color: 0xff2200, transparent: true, opacity: 0.7, side: THREE.DoubleSide })
+    const mat  = this.sharedMeteorMat.clone()
     const ring = new THREE.Mesh(this.meteorRingGeo, mat)
     ring.rotation.x = -Math.PI / 2
     ring.position.set(wx, 0.08, wz)
